@@ -3,8 +3,11 @@ import configparser
 from typing import List
 
 config_path = pathlib.Path(__file__).parent.absolute() / "settings.ini"
+client_callsign_path = pathlib.Path(__file__).parent.absolute() / "client_callsign.ini"
+server_callsign_path = pathlib.Path(__file__).parent.absolute() / "server_callsign.ini"
+
 config = configparser.ConfigParser()
-config.read(config_path)
+config.read([config_path, client_callsign_path, server_callsign_path])
 
 def update_config(section, option, value):
     """ Update the settings in the settings.ini file """
