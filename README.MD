@@ -1,112 +1,137 @@
 # HAMSTR - Decentralized NOSTR over Ham Radio
 
-HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) is an open-source project enabling decentralized NOSTR communication over ham radio. This system allows off-grid clients to interact with NOSTR relays through a server with internet access, utilizing HF/VHF ham radio bands.
+HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enables fully off-grid NOSTR communication over ham radio. The system allows clients with no internet access to interact with NOSTR relays through a server with internet access, utilizing HF/VHF ham radio bands.
 
-## Implemented Features
-
-### Core Radio Features
-- Client-server architecture for off-grid NOSTR interaction via ham radio
+## Overview
+- Client-server architecture enabling off-grid NOSTR access
 - AX.25 protocol and KISS TNC implementation for packet transmission
-- Support for 300, 600, and 1200 baud operation
-- Packet system with sequencing, retries, and missing packet requests
-- CRC-32 checksum for error detection
-- Connection workflow: Connect, Data Request, Ready exchange, Response, Done, Done_ACK, Disconnect
-- Error handling with retries and timeouts
-- State management using ModemState enum
-- Configuration management via settings.ini
-
-### NOSTR Features
-- Full note writing and transmission from client to server
-- Following feed with recent notes from followed accounts
-- Proper note signing and verification
-- Reply system with proper NOSTR tagging
-- Profile display name support
-- Image tag stripping for bandwidth efficiency
-- SQLite-based note storage on client side
-
-### UI Features
-- Flask-based web UI for the client
-- Real-time operation progress tracking
-- Connection status monitoring
-- Packet progress visualization
-- User-friendly error notifications
-- Responsive modal system for interactions
-- Dark/Light mode support
-
-## Known Bugs
-1. Packet transmission stops if initial DONE message is missed by server, leading to timeout and disconnect regardless of packet status
-2. Unexplained delay in note requesting process after packet ACK, particularly noticeable at 1200 baud
-3. Browser refresh during active operations causes loss of operation tracking until completion
-
-## Upcoming Features
-- Dynamic baud rate adjustment based on signal conditions
-- Frequency selection using propagation data
-- FLDIGI KISS packet support for robust modes
-- Content compression for bandwidth optimization
-- Local relay implementation for offline operation
-- Reticulum network integration
-- Performance optimization for higher baud rates
-- Decentralized authentication system
-- Comprehensive documentation and inline comments
+- Support for 300-1200 baud operation (optimized for 300-600)
+- Full NOSTR functionality: reading, writing, replies, boosts, quotes
+- Text and hashtag search capabilities
+- Following feed support
+- Profile display names and lightning address support
 
 ## Requirements
 - Python 3.7+
-- Software modem or TCP-based KISS compatible setup (e.g., UZ7HO, Direwolf with hamlib)
-- HF transceiver for both client and server
+- KISS-compatible TNC (hardware or software like UZ7HO, Direwolf)
+- HF/VHF transceiver for both client and server
+- NOSTR private key (nsec)
+- Valid amateur radio license and callsign
 
 ## Installation
 
 1. Clone this repository:
-   ```
+   ```bash
    git clone https://github.com/your-repo/hamstr.git
    cd hamstr
    ```
 
 2. Install required dependencies:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
 ## Configuration
 
+### Client Setup
+1. Run the client application:
+   ```bash
+   python web_app.py
+   ```
+
+2. Access the web interface:
+   - Open your browser to `http://localhost:5173`
+
+3. Configure NOSTR:
+   - Go to Settings > NOSTR Login
+   - Enter your nsec key in the encrypted input field
+   - Your key will be securely stored for future use
+
+4. Configure Client Settings:
+   - Go to Settings > App Settings
+   - Set your amateur radio callsign and SSID
+   - Configure your TNC port (default: 8001)
+   - Verify TNC connection
+   - Optional: Adjust number of notes to request at a time
+
+### Server Setup
 1. Edit `settings.ini`:
-   - Set the callsign for client and server
-   - Configure TNC ports if different from default
-   - Set your NOSTR public key (npub)
+   - Set server callsign and SSID
+   - Configure TNC port if different from default
+   - Optional: Add/modify NOSTR relay list
 
-2. Ensure your software modem (e.g., UZ7HO, Direwolf) is properly configured with PTT setup, and port configured for each.
+2. Run the server:
+   ```bash
+   python server.py
+   ```
 
-## Usage
+## Important Notes
 
-### Server
-Run the server that is connected to an HF transceiver:
-```
-python server.py
-```
+### TNC Configuration
+- Any KISS-compatible TNC should work
+- Software TNCs (UZ7HO, Direwolf) must be configured for KISS mode
+- Verify TNC port settings match your configuration
+- Default ports: Client 8001, Server 8002
 
-### Client
-Run the client app connected to an HF transceiver in the field:
-```
-python app.py
-```
+### Callsign Setup
+- Client callsign must be set in App Settings
+- Server callsign must be configured in settings.ini
+- Both require valid amateur radio callsigns
+- SSID can be 0-15
 
-## Project Structure
-- `app.py`: Client application
-- `server.py`: Server application
-- `core.py`: Core functionality
-- `ax25_kiss_utils.py`: AX.25 and KISS protocol utilities
-- `models.py`: Data models
-- `networking.py`: Networking functions
-- `config.py`: Configuration handling
-- `settings.ini`: User-configurable settings
-- `nostr.py`: NOSTR-related functionality
+### ⚠️ Warning
+- Do not modify timeout settings, retry counts, or ACK parameters unless you understand the implications
+- Default settings are optimized for reliable HF packet operation
+- Incorrect timing settings can cause communication failures
 
-## Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
+### Performance Notes
+- Optimized for 300-600 baud operation
+- Higher baud rates available but may be less reliable
+- Maximum packet size is 200 bytes
+- Content compression is automatic
+
+## Basic Operation
+1. Start client and server applications
+2. Configure settings as described above
+3. Use the web interface to:
+   - Read recent NOSTR posts
+   - Write new posts
+   - Reply to posts
+   - Boost or quote posts
+   - Search content
+   - Follow other users
+
+## Troubleshooting
+- Verify TNC is in KISS mode
+- Check port settings match TNC configuration
+- Ensure radio PTT is properly configured
+- Verify server is running and accessible
+- Check callsign settings are correct
+- Monitor progress drawer for detailed operation logs
+
+## Security Notes
+- Server never has access to NOSTR keys
+- All NOSTR operations happen client-side
+- Keys are stored securely on client only
+- Server acts as a general relay point only
+
+## Future Features
+- Dynamic baud rate adjustment based on signal conditions
+- Frequency selection using propagation data
+- FLDIGI KISS packet support
+- Optimize content compression
+- Reticulum network integration
+- Performance optimization for higher baud rates
+- Decentralized authentication system
+- Comprehensive documentation
 
 ## License
 This project is open-source and available under the MIT License.
 
-## Contact
-For questions or assistance, contact me on NOSTR:
-@Liberty Farmer, npub1uwh0m2y8y5489nhr27xn8vkumy8flefm30kkx3l0tcn0wss34kaszyfqu7
+## Support
+For questions or assistance:
+- Submit issues on GitHub
+- Contact via NOSTR: @LibertyFarmer
+
+## Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
