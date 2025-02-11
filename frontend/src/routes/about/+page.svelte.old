@@ -1,0 +1,4 @@
+<br>
+<p>HAMSTR is an open-source project enabling decentralized NOSTR communication over ham radio. 
+    This system allows off-grid clients to interact with NOSTR relays through a server with internet access, 
+    utilizing HF HAM radio packets.</p>
