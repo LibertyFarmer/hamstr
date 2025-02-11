@@ -10,10 +10,31 @@ config = configparser.ConfigParser()
 config.read([config_path, client_callsign_path, server_callsign_path])
 
 def update_config(section, option, value):
-    """ Update the settings in the settings.ini file """
-    config.set(section, option, str(value))  # Update the value in the config (use config, not config_parser)
-    with open(config_path, 'w') as configfile:
-        config.write(configfile)  # Write the changes to the file
+    """Update the settings in the appropriate INI file."""
+    config.read(config_path)  # Always read settings.ini first
+
+    if section == 'RADIO':
+        if option == 'client_callsign':
+            config_to_update = configparser.ConfigParser()
+            config_to_update.read(client_callsign_path)
+            config_to_update.set(section, option, str(value))
+            with open(client_callsign_path, 'w') as f:
+                config_to_update.write(f)
+        elif option == 'server_callsign':
+            config_to_update = configparser.ConfigParser()
+            config_to_update.read(server_callsign_path)
+            config_to_update.set(section, option, str(value))
+            with open(server_callsign_path, 'w') as f:
+                config_to_update.write(f)
+        # Remove the [RADIO] section from settings.ini
+        if config.has_section('RADIO'):
+            config.remove_section('RADIO')
+            with open(config_path, 'w') as f:
+                config.write(f)
+    else:  # For sections other than 'RADIO'
+        config.set(section, option, str(value))
+        with open(config_path, 'w') as f:
+            config.write(f)
 
 def parse_tuple(input):
     # Remove parentheses and split by comma
@@ -61,6 +82,4 @@ NO_PACKET_TIMEOUT = config.getint('GENERAL', 'NO_PACKET_TIMEOUT')
 READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
 MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'MISSING_PACKETS_THRESHOLD')
 DEFAULT_NOTE_REQUEST_COUNT = config.getint('NOSTR', 'DEFAULT_NOTE_REQUEST_COUNT')
-# NOSTR_PUBKEY = config.get('NOSTR', 'NPUB')
-# NOSTR_NSEC = config.get('NOSTR', 'NSEC')
 NOSTR_RELAYS = get_relay_list()

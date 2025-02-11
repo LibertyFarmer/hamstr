@@ -4,6 +4,7 @@ import logging
 import asyncio
 import time
 import requests
+import aiohttp
 from datetime import timedelta
 from models import NoteRequestType, NoteType
 from config import NOSTR_RELAYS
@@ -46,7 +47,7 @@ async def get_display_name(client, pubkey):
                         .kind(Kind(0))
                         .limit(1))
         
-        source = EventSource.relays(timedelta(seconds=5))
+        source = EventSource.relays(timedelta(seconds=1))
         profile_events = await client.get_events_of([profile_filter], source)
         
         if profile_events:
@@ -72,7 +73,7 @@ async def get_display_name(client, pubkey):
         logging.error(f"Error getting display name: {e}")
         # Return pubkey in npub format as fallback
         try:
-            npub = Keys.parse_public_key(pubkey.to_hex()).to_bech32()
+            npub = pubkey.to_bech32()
             return npub, None
         except:
             return pubkey.to_hex(), None
@@ -87,7 +88,7 @@ async def get_following_list(client, public_key):
                          .kind(Kind(3))
                          .limit(1))
         
-        source = EventSource.relays(timedelta(seconds=10))
+        source = EventSource.relays(timedelta(seconds=1)) 
         contacts = await client.get_events_of([contact_filter], source)
         
         if not contacts:
@@ -126,7 +127,7 @@ async def get_recent_notes(npub_hex, number, request_type=None):
         
         try:
             logging.info(f"Step 2: Getting {number} Recent Posts from relays...")
-            source = EventSource.relays(timedelta(seconds=10))
+            source = EventSource.relays(timedelta(seconds=1))
 
             if request_type == NoteRequestType.FOLLOWING:
                 # For following, we need the caller's public key
@@ -355,7 +356,7 @@ async def search_user_notes(search_term, number):
         await client.add_relays(NOSTR_RELAYS)
         await client.connect()
         
-        source = EventSource.relays(timedelta(seconds=10))
+        source = EventSource.relays(timedelta(seconds=1))
         is_npub_search = search_term.lower().startswith('npub')
         
         if is_npub_search:
@@ -479,11 +480,16 @@ def search_nostr(request_type, number, search_text=None):
                 'kind': 1,
                 'limit': number,
                 'sort': 'time',
-                'order': 'descending'
+                'order': 'descending',
+                'until': int(time.time()),
+                'since': int(time.time()) - (90 * 24 * 60 * 60)
             }
             
             logging.info(f"[SEARCH] Querying nostr.wine API for text: {search_text}")
-            response = requests.get('https://api.nostr.wine/search', params=params)
+            start_time = time.time()
+            response = requests.get('https://api.nostr.wine/search', params=params, timeout=5.0)
+            api_time = time.time() - start_time
+            logging.info(f"[SEARCH] API response time: {api_time:.2f} seconds")
             
             if response.status_code == 200:
                 response_json = response.json()
@@ -585,7 +591,7 @@ def search_nostr(request_type, number, search_text=None):
                     for tag in clean_tags:
                         tag_filter = tag_filter.custom_tag(SingleLetterTag.lowercase(Alphabet.T), [tag])
                     
-                    source = EventSource.relays(timedelta(seconds=10))
+                    source = EventSource.relays(timedelta(seconds=1))
                     events = await client.get_events_of([tag_filter], source)
                     
                     event_list = []
