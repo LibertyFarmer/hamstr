@@ -15001,4 +15001,4 @@ frontend/node_modules/yocto-queue/package.json
 frontend/node_modules/yocto-queue/readme.md
 backend/data/client_callsign.ini
 backend/data/server_callsign.ini
-**/data/
+**/backend/data/
