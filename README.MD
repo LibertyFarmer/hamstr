@@ -129,9 +129,9 @@ HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enabl
 This project is open-source and available under the MIT License.
 
 ## Support
-For questions or assistance:
+For questions or assistance:vvv
 - Submit issues on GitHub
-- Contact via NOSTR: @LibertyFarmer
+- Contact via NOSTR: @LibertyFarmer / npub1uwh0m2y8y5489nhr27xn8vkumy8flefm30kkx3l0tcn0wss34kaszyfqu7v
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
