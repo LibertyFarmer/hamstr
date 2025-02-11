@@ -15003,3 +15003,4 @@ backend/data/client_callsign.ini
 backend/data/server_callsign.ini
 backend/data/.nsec_key
 backend/data/notes.db
+backend/data/.nsec_data
