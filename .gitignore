@@ -1,3 +1,6 @@
+backend/data/client_callsign.ini
+backend/data/server_callsign.ini
+**/data/
 frontend/.svelte-kit/ambient.d.ts
 frontend/.svelte-kit/non-ambient.d.ts
 frontend/.svelte-kit/tsconfig.json
@@ -14999,6 +15002,3 @@ frontend/node_modules/yocto-queue/index.js
 frontend/node_modules/yocto-queue/license
 frontend/node_modules/yocto-queue/package.json
 frontend/node_modules/yocto-queue/readme.md
-backend/data/client_callsign.ini
-backend/data/server_callsign.ini
-**/data/
