@@ -25,7 +25,7 @@ MENTION_PATTERNS = [
 
 
 def clean_content(content):
-    """Replace image URLs and video URLs with placeholders."""
+    """Replace image & video URLs with [placeholder]"""
     import re
     # Match common image URLs and Markdown image syntax
     image_pattern = r'!\[.*?\]\(.*?\)|\b(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp))\b'
@@ -47,7 +47,7 @@ async def get_display_name(client, pubkey):
                         .kind(Kind(0))
                         .limit(1))
         
-        source = EventSource.relays(timedelta(seconds=1))
+        source = EventSource.relays(timedelta(seconds=.5))
         profile_events = await client.get_events_of([profile_filter], source)
         
         if profile_events:
@@ -88,7 +88,7 @@ async def get_following_list(client, public_key):
                          .kind(Kind(3))
                          .limit(1))
         
-        source = EventSource.relays(timedelta(seconds=1)) 
+        source = EventSource.relays(timedelta(seconds=.5)) 
         contacts = await client.get_events_of([contact_filter], source)
         
         if not contacts:
@@ -356,7 +356,7 @@ async def search_user_notes(search_term, number):
         await client.add_relays(NOSTR_RELAYS)
         await client.connect()
         
-        source = EventSource.relays(timedelta(seconds=1))
+        source = EventSource.relays(timedelta(seconds=.5))
         is_npub_search = search_term.lower().startswith('npub')
         
         if is_npub_search:
@@ -480,9 +480,7 @@ def search_nostr(request_type, number, search_text=None):
                 'kind': 1,
                 'limit': number,
                 'sort': 'time',
-                'order': 'descending',
-                'until': int(time.time()),
-                'since': int(time.time()) - (90 * 24 * 60 * 60)
+                'order': 'descending'
             }
             
             logging.info(f"[SEARCH] Querying nostr.wine API for text: {search_text}")
@@ -591,7 +589,7 @@ def search_nostr(request_type, number, search_text=None):
                     for tag in clean_tags:
                         tag_filter = tag_filter.custom_tag(SingleLetterTag.lowercase(Alphabet.T), [tag])
                     
-                    source = EventSource.relays(timedelta(seconds=1))
+                    source = EventSource.relays(timedelta(seconds=.5))
                     events = await client.get_events_of([tag_filter], source)
                     
                     event_list = []
@@ -754,22 +752,55 @@ def publish_note(note):
         logging.error(f"[PUBLISH] Error in publish_note: {e}")
         return False
     
+async def get_reference_author(client, note_id):
+    """Get author display name for a referenced note."""
+    try:
+        reference_filter = (Filter()
+                        .ids([note_id])
+                        .limit(1))
+        
+        source = EventSource.relays(timedelta(seconds=5))
+        reference_events = await client.get_events_of([reference_filter], source)
+        
+        if reference_events:
+            event = reference_events[0]
+            event_data = json.loads(event.as_json())
+            author_pubkey = PublicKey.from_hex(event_data.get('pubkey'))
+            display_name, _ = await get_display_name(client, author_pubkey)
+            return display_name or "unknown user"
+    except Exception as e:
+        logging.error(f"Error getting reference author: {e}")
+        return "unknown user"
+
 async def process_mentions_in_note(client, note_data):
     try:
         is_reply = any(tag[0] == 'e' for tag in note_data.get('tags', []))
         content = note_data.get('content', '')
 
-        # Get pubkeys from p tags and convert to display names
+        # Handle note1/nevent1 references first
+        note_pattern = r'nostr:note1[a-zA-Z0-9]{59}'
+        nevent_pattern = r'nostr:nevent1[a-zA-Z0-9]+'
+        
+        # Replace note references with short format
+        for pattern in [note_pattern, nevent_pattern]:
+            matches = re.finditer(pattern, content)
+            for match in matches:
+                note_ref = match.group(0)
+                note_id = note_ref.split('1')[1]
+                author = await get_reference_author(client, note_id)
+                content = content.replace(note_ref, f"[referenced note by @{author}]")
+
+        # Process mentions from p tags
         p_tags = [tag for tag in note_data.get('tags', []) if tag[0] == 'p']
         for tag in p_tags:
             try:
                 pubkey = PublicKey.from_hex(tag[1])
                 display_name, _ = await get_display_name(client, pubkey)
                 if display_name:
-                    # Replace matching npub mention with display name
-                    npub_pattern = r'(?:nostr:)?npub[a-zA-Z0-9]{58}'
+                    # Fixed pattern with word boundary
+                    npub_pattern = r'(?:nostr:)?npub[a-zA-Z0-9]{58}\b'
                     content = re.sub(npub_pattern, f"@{display_name}", content, count=1)
-                    logging.info(f"Replaced npub mention with @{display_name}")
+                    logging.info(f"Replaced mention with: @{display_name}")
             except Exception as e:
                 logging.error(f"Error processing mention from p tag: {e}")
 

@@ -13,7 +13,7 @@ from socketio_logger import init_socketio, get_socketio_logger
 from nostr_sdk import Keys, EventId, EventBuilder, Tag, Kind 
 from nsec_storage import NSECStorage
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from client import Client
 
