@@ -1,6 +1,11 @@
 # HAMSTR - Decentralized NOSTR over Ham Radio
 
-HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enables fully off-grid NOSTR communication over ham radio. The system allows clients with no internet access to interact with NOSTR relays through a server with internet access, utilizing HF/VHF ham radio bands.
+HAMSTR enables fully off-grid NOSTR communication over ham radio. The system allows clients with no internet access to interact with NOSTR relays through a server with internet access, utilizing HF/VHF ham radio bands.
+
+## NOTE
+
+Currently, the client and server share a lot of libraries. For now, clone/download the repo into both client side and server side, then modify the ini. Hopefully, server GUI and non-shared settings/libraries will be in future soon.
+
 
 ## Overview
 - Client-server architecture enabling off-grid NOSTR access
@@ -9,7 +14,9 @@ HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enabl
 - Full NOSTR functionality: reading, writing, replies, boosts, quotes
 - Text and hashtag search capabilities
 - Following feed support
-- Profile display names and lightning address support
+- Profile display names and lightning address support for future integration
+
+NOTE: Search notes by display name currently not working!
 
 ## Requirements
 - Python 3.7+
@@ -22,7 +29,7 @@ HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enabl
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/your-repo/hamstr.git
+   git clone https://github.com/LibertyFarmer/hamstr.git
    cd hamstr
    ```
 
@@ -31,36 +38,46 @@ HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enabl
    pip install -r requirements.txt
    ```
 
-## Configuration
+## Configuration and Running
+
+1. Start KISS Client and Server TNC software - Both sides must match protocal and baudrate!
 
 ### Client Setup
-1. Run the client application:
+
+1. Edit `/backend/data/client_settings.ini`:
+   - Set client callsign and SSID
+
+2. Run the client application:
    ```bash
    python web_app.py
    ```
 
-2. Access the web interface:
-   - Open your browser to `http://localhost:5173`
+3. Access the web interface:
+   - Open your browser to `http://localhost:5000`
 
-3. Configure NOSTR:
+4. Configure NOSTR in App:
    - Go to Settings > NOSTR Login
    - Enter your nsec key in the encrypted input field
    - Your key will be securely stored for future use
 
-4. Configure Client Settings:
+5. Configure Client Settings in app:
+
    - Go to Settings > App Settings
-   - Set your amateur radio callsign and SSID
-   - Configure your TNC port (default: 8001)
-   - Verify TNC connection
-   - Optional: Adjust number of notes to request at a time
+   - Choose Baud Rate (MUST MATCH TNC ON CLIENT AND SERVER)
+   - Configure your TNC port (Default: 8001)
+   - Optional: Adjust number of notes to request at a time (Default: 2)
 
 ### Server Setup
-1. Edit `settings.ini`:
-   - Set server callsign and SSID
-   - Configure TNC port if different from default
-   - Optional: Add/modify NOSTR relay list
 
-2. Run the server:
+1. On server, edit `/backend/settings.ini`:
+
+   - Configure TNC port if different from default (Default: 8002)
+   - Optional: Modify or add to default NOSTR relay list
+
+2. On server, edit `/backend/data/server_settings.ini`:
+   - Set server callsign and SSID
+
+3. To Run the server:
    ```bash
    python server.py
    ```
@@ -74,9 +91,9 @@ HAMSTR (Ham-radio Assisted Message System for Transmitting NOSTR Reliably) enabl
 - Default ports: Client 8001, Server 8002
 
 ### Callsign Setup
-- Client callsign must be set in App Settings
-- Server callsign must be configured in settings.ini
-- Both require valid amateur radio callsigns
+- Client callsign must be set in client_settings.ini
+- Server callsign must be configured in server_settings.ini
+- Both sides require valid amateur radio callsign AND SSID. use 0 if no SSID.
 - SSID can be 0-15
 
 ### ⚠️ Warning
@@ -132,6 +149,9 @@ This project is open-source and available under the MIT License.
 For questions or assistance:
 - Submit issues on GitHub
 - Contact via NOSTR: @LibertyFarmer
+   npub: npub1uwh0m2y8y5489nhr27xn8vkumy8flefm30kkx3l0tcn0wss34kaszyfqu7
 
 ## Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions and feedback is welcome! Please feel free to submit a Pull Request.
+
+ZAPS ALWAYS APPRECIATED!
