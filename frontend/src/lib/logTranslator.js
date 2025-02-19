@@ -2,7 +2,6 @@ const logTranslations = {
   // Static translations
   '\\[SYSTEM\\] Sending Connection Request': 'Connecting...',
   '\\[CLIENT\\] Failed to request notes': 'Sorry, It failed...',
-  '\\[CLIENT\\] [SESSION] CONNECTED to KK7AHK-7 \\[CLIENT_DISCONNECT\\]': 'Initiating Disconnect..',
   '\\[CLIENT\\] Disconnect acknowledged by server': 'Server Disconnected',
   '\\[CLIENT\\] Failed to connect to server.*': 'Connection to server failed',
   '\\[CONTROL\\] CONNECT ACK RECEIVED': 'Connected',
