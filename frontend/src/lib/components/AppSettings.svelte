@@ -1,6 +1,6 @@
 <script>
   import { onMount, createEventDispatcher } from 'svelte';
-  import { baseURL } from '$lib/store';
+  import { baseURL } from '$lib/stores/baseUrlStore';
   import { settingsStore } from '$lib/stores/settingsStore';
   import { Input, Select, Label, Button, Card } from 'flowbite-svelte';
 

@@ -2,6 +2,7 @@
   import { Modal, Button, Textarea } from 'flowbite-svelte';
   import { NoteType } from '$lib/utils/enums';
   import { onMount } from 'svelte';
+  import { baseURL } from '$lib/stores/baseUrlStore';
  
   export let show = false;
   export let onClose;

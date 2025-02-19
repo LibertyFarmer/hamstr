@@ -10,7 +10,7 @@
   import TopNav from '$lib/components/TopNav.svelte';
   import ProgressDrawer from '$lib/components/ProgressDrawer.svelte';
   import { logStore } from '$lib/stores/logStore';
-  import { baseURL } from '$lib/store';
+  import { baseURL } from '$lib/stores/baseUrlStore';
   import { writable } from 'svelte/store';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
@@ -125,7 +125,7 @@
     showWriteNoteModal = false;
     isSending = true;
     
-    const response = await fetch(`${$baseURL}/send_note`, {
+    const response = await fetch(`${$baseURL}/api/send_note`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -140,7 +140,7 @@
     }
 
     if (result.success) {
-      const notesResponse = await fetch(`${$baseURL}/`);
+      const notesResponse = await fetch(`${$baseURL}/api/notes`);
       if (!notesResponse.ok) throw new Error('Failed to fetch updated notes');
       const notesData = await notesResponse.json();
       

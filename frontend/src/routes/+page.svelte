@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { Card, Spinner } from 'flowbite-svelte';
-  import { baseURL } from '$lib/store';
+  import { baseURL } from '$lib/stores/baseUrlStore';
   import NoteCard from '$lib/components/NoteCard.svelte';
 
   let notes = [];
@@ -24,7 +24,7 @@
     error = null;
 
     try {
-      const response = await fetch(`${apiBaseUrl}/?page=${page}&limit=${NOTES_PER_PAGE}`);
+      const response = await fetch(`${apiBaseUrl}/api/notes?page=${page}&limit=${NOTES_PER_PAGE}`);
       if (!response.ok) throw new Error('Failed to fetch notes');
       const data = await response.json();
       
@@ -35,7 +35,6 @@
       }
       
       hasMore = data.pagination.has_more;
-      console.log("Fetched notes:", data);
     } catch (err) {
       console.error("Error fetching notes:", err);
       error = err.message;

@@ -1,157 +1,134 @@
-# HAMSTR - Decentralized NOSTR over Ham Radio
+# HAMSTR - NOSTR over Ham Radio
 
-HAMSTR enables fully off-grid NOSTR communication over ham radio. The system allows clients with no internet access to interact with NOSTR relays through a server with internet access, utilizing HF/VHF ham radio bands.
+HAMSTR enables fully off-grid NOSTR communication over ham radio, allowing clients with no internet access to interact with NOSTR relays through a server with internet connectivity.
 
-## NOTE
+## Quick Start
 
-Currently, the client and server share a lot of libraries. For now, clone/download the repo into both client side and server side, then modify the ini. Hopefully, server GUI and non-shared settings/libraries will be in future soon.
-
-
-## Overview
-- Client-server architecture enabling off-grid NOSTR access
-- AX.25 protocol and KISS TNC implementation for packet transmission
-- Support for 300-1200 baud operation (optimized for 300-600)
-- Full NOSTR functionality: reading, writing, replies, boosts, quotes
-- Text and hashtag search capabilities
-- Following feed support
-- Profile display names and lightning address support for future integration
-
-NOTE: Search notes by display name currently not working!
-
-## Requirements
+### Prerequisites
+- Valid amateur radio license
 - Python 3.7+
-- KISS-compatible TNC (hardware or software like UZ7HO, Direwolf)
-- HF/VHF transceiver for both client and server
+- Node.js 16+
+- KISS-compatible TNC (hardware or software like Direwolf)
+- HF/VHF transceiver
 - NOSTR private key (nsec)
-- Valid amateur radio license and callsign
 
-## Installation
+### Installation
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/LibertyFarmer/hamstr.git
-   cd hamstr
-   ```
+1. Clone the repository:
+```bash
+git clone https://github.com/LibertyFarmer/hamstr.git
+cd hamstr
+```
 
-2. Install required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. Install backend dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-## Configuration and Running
-
-1. Start KISS Client and Server TNC software - Both sides must match protocal and baudrate!
+3. Install and build frontend:
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
 
 ### Client Setup
 
-1. Edit `/backend/data/client_settings.ini`:
-   - Set client callsign and SSID
+1. Edit `backend/settings.ini`:
+   - Set `CLIENT_HOST` and `CLIENT_PORT` for your TNC
+   - Configure your callsign and SSID
+   - Adjust baud rate if needed (default: 600)
 
-2. Run the client application:
-   ```bash
-   python web_app.py
-   ```
+2. Start client:
+```bash
+cd backend
+python web_app.py
+```
 
-3. Access the web interface:
-   - Open your browser to `http://localhost:5000`
-
-4. Configure NOSTR in App:
+3. Access web interface:
+   - Open `http://localhost:5000`
    - Go to Settings > NOSTR Login
-   - Enter your nsec key in the encrypted input field
-   - Your key will be securely stored for future use
-
-5. Configure Client Settings in app:
-
-   - Go to Settings > App Settings
-   - Choose Baud Rate (MUST MATCH TNC ON CLIENT AND SERVER)
-   - Configure your TNC port (Default: 8001)
-   - Optional: Adjust number of notes to request at a time (Default: 2)
+   - Enter your nsec key
+   - Configure TNC settings if needed
 
 ### Server Setup
 
-1. On server, edit `/backend/settings.ini`:
+1. Edit `backend/settings.ini`:
+   - Set `SERVER_HOST` and `SERVER_PORT`
+   - Configure server callsign
+   - Add/modify NOSTR relay list if desired
 
-   - Configure TNC port if different from default (Default: 8002)
-   - Optional: Modify or add to default NOSTR relay list
+2. Start server:
+```bash
+cd backend
+python server.py
+```
 
-2. On server, edit `/backend/data/server_settings.ini`:
-   - Set server callsign and SSID
+## Features
 
-3. To Run the server:
-   ```bash
-   python server.py
-   ```
-
-## Important Notes
-
-### TNC Configuration
-- Any KISS-compatible TNC should work
-- Software TNCs (UZ7HO, Direwolf) must be configured for KISS mode
-- Verify TNC port settings match your configuration
-- Default ports: Client 8001, Server 8002
-
-### Callsign Setup
-- Client callsign must be set in client_settings.ini
-- Server callsign must be configured in server_settings.ini
-- Both sides require valid amateur radio callsign AND SSID. use 0 if no SSID.
-- SSID can be 0-15
-
-### ⚠️ Warning
-- Do not modify timeout settings, retry counts, or ACK parameters unless you understand the implications
-- Default settings are optimized for reliable HF packet operation
-- Incorrect timing settings can cause communication failures
-
-### Performance Notes
+- Full NOSTR functionality
+  - Read/write posts
+  - Reply, boost, quote
+  - Hashtag and text search
+  - Following feed support
+  - Profile display names
+  - Lightning address support
+- AX.25 protocol with KISS TNC
 - Optimized for 300-600 baud operation
-- Higher baud rates available but may be less reliable
-- Maximum packet size is 200 bytes
-- Content compression is automatic
+- Content compression for efficient transmission
+- Secure key storage
+- Socket.IO real-time logging
+- Progress monitoring
+- Dark mode support
 
-## Basic Operation
-1. Start client and server applications
-2. Configure settings as described above
-3. Use the web interface to:
-   - Read recent NOSTR posts
-   - Write new posts
-   - Reply to posts
-   - Boost or quote posts
-   - Search content
-   - Follow other users
+## Technical Notes
 
-## Troubleshooting
-- Verify TNC is in KISS mode
-- Check port settings match TNC configuration
-- Ensure radio PTT is properly configured
-- Verify server is running and accessible
-- Check callsign settings are correct
-- Monitor progress drawer for detailed operation logs
+### Radio Configuration
+- Any KISS-compatible TNC supported
+- Software TNCs must be in KISS mode
+- Default ports: Client 8001, Server 8002
+- Optimized for 300-600 baud
+- Maximum packet size: 200 bytes
 
-## Security Notes
-- Server never has access to NOSTR keys
+### Security
+- NOSTR keys stored only on client
 - All NOSTR operations happen client-side
-- Keys are stored securely on client only
-- Server acts as a general relay point only
+- Server acts only as relay
+- Encrypted key storage
 
 ## Future Features
-- Dynamic baud rate adjustment based on signal conditions
-- Frequency selection using propagation data
-- FLDIGI KISS packet support
-- Optimize content compression
-- Reticulum network integration
-- Performance optimization for higher baud rates
-- Decentralized authentication system
-- Comprehensive documentation
 
-## License
-This project is open-source and available under the MIT License.
+- Dynamic baud rate adjustment
+- Offline zaps using NOSTR Wallet Connect
+- FLDIGI KISS packet support
+- Reticulum network integration
+- Decentralized authentication
+- HF propagation optimization
+- Performance enhancements for higher baud rates
+- Server GUI interface
+
+## Troubleshooting
+
+- Verify TNC is in KISS mode
+- Check port settings in settings.ini
+- Ensure radio PTT is configured
+- Monitor progress drawer for operation logs
+- Check callsign settings format
 
 ## Support
-For questions or assistance:
+
 - Submit issues on GitHub
 - Contact via NOSTR: @LibertyFarmer
-   npub: npub1uwh0m2y8y5489nhr27xn8vkumy8flefm30kkx3l0tcn0wss34kaszyfqu7
+  - npub1uwh0m2y8y5489nhr27xn8vkumy8flefm30kkx3l0tcn0wss34kaszyfqu7
+
+## License
+
+This project is open-source under the MIT License.
 
 ## Contributing
-Contributions and feedback is welcome! Please feel free to submit a Pull Request.
 
-ZAPS ALWAYS APPRECIATED!
+Contributions welcome! Please feel free to submit pull requests.
+
+---
+ZAPS APPRECIATED! ⚡

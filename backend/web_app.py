@@ -13,13 +13,14 @@ from socketio_logger import init_socketio, get_socketio_logger
 from nostr_sdk import Keys, EventId, EventBuilder, Tag, Kind 
 from nsec_storage import NSECStorage
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from client import Client
 
-
-app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build')
+
+app = Flask(__name__, static_folder=FRONTEND_DIR)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 socketio = init_socketio(app)
 nsec_storage = NSECStorage(BASE_DIR)
@@ -37,52 +38,43 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 socketio_logger = get_socketio_logger()
 
-# Make sure init_db is called at app startup
+# Setup db init on app startup
 
 def init_db():
     db_path = os.path.join(BASE_DIR, 'data', 'notes.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     try:
-        # Check if table exists
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'")
-        table_exists = c.fetchone() is not None
-        
-        if not table_exists:
-            c.execute('''CREATE TABLE IF NOT EXISTS notes
-                         (id TEXT PRIMARY KEY,
-                          content TEXT,
-                          created_at INTEGER,
-                          pubkey TEXT,
-                          display_name TEXT,
-                          lud16 TEXT,
-                          is_local INTEGER,
-                          stored_at INTEGER)''')
-            conn.commit()
-            socketio_logger.info("[DATABASE] Successfully initialized database")
-        else:
-            # Check if stored_at column exists
-            c.execute("PRAGMA table_info(notes)")
-            columns = [col[1] for col in c.fetchall()]
-            if 'stored_at' not in columns:
-                c.execute("ALTER TABLE notes ADD COLUMN stored_at INTEGER")
-                conn.commit()
-                socketio_logger.info("[DATABASE] Added stored_at column to existing database")
+        c.execute('''CREATE TABLE IF NOT EXISTS notes
+                     (id TEXT PRIMARY KEY,
+                      content TEXT,
+                      created_at INTEGER,
+                      pubkey TEXT,
+                      display_name TEXT,
+                      lud16 TEXT,
+                      is_local INTEGER,
+                      stored_at INTEGER)''')
+        conn.commit()
     except Exception as e:
         socketio_logger.error(f"[DATABASE] Error initializing database: {e}")
     finally:
         conn.close()
 
-# Make sure init_db is called at app startup
+# Call the initialize database function at startup!!
 init_db()
 
-@app.route('/')
-def index():
+
+# API Routes
+@app.route('/api/notes')
+def get_notes():
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 10, type=int)
     notes = get_notes_from_db(page, limit)
-    socketio_logger.debug(f"Notes being served... Page: {page}, Limit: {limit}")
-    return jsonify(notes)
+    response = jsonify(notes)
+    socketio_logger.info(f"[API] Returning notes response: {response.get_data(as_text=True)}")
+    return response
+
 
 def get_notes_from_db(page=1, limit=10):
     offset = (page - 1) * limit
@@ -133,7 +125,7 @@ def check_radio_status(operation_type):
         return True
     return False
 
-@app.route('/send_note', methods=['POST'])
+@app.route('/api/send_note', methods=['POST'])
 def send_note():
     global radio_operation_in_progress
     
@@ -226,7 +218,7 @@ def send_note():
                 note_bech32 = event_id.to_bech32()
                 
                 # Add the bech32 reference to the existing content
-                content = content + f"nostr:{note_bech32}"
+                content = content + f"\nnostr:{note_bech32}"
                 socketio_logger.info(f"[CLIENT] Quote content formatted: {content}")
                 
                 # Add quote-specific tags
@@ -667,6 +659,14 @@ def clear_notes():
             "success": False,
             "message": f"Error clearing database: {str(e)}"
         }), 500
+    
+# Static file routes
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_static(path):
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
 

@@ -3,7 +3,7 @@
   import { BottomNav, BottomNavItem, Toast, Spinner } from 'flowbite-svelte';
   import { HomeSolid, PenNibSolid, AdjustmentsVerticalOutline, DownloadSolid } from 'flowbite-svelte-icons';
   import { isRequestingNotes } from '$lib/stores/requestNotesStore';
-  import { baseURL } from '$lib/store';
+  import { baseURL } from '$lib/stores/baseUrlStore';
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import { NoteRequestType } from '$lib/utils/enums';
@@ -185,8 +185,9 @@
             }
             
             try {
-                // Get fresh notes
-                const notesResponse = await fetch(`${apiBaseUrl}/`);
+
+              // Get fresh notes when done
+                const notesResponse = await fetch(`${apiBaseUrl}/api/notes`);
                 const notesData = await notesResponse.json();
                 
                 window.dispatchEvent(new CustomEvent('notesUpdated', { 
