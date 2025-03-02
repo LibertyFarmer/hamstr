@@ -46,6 +46,9 @@ class Client:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
+            
+            # Add a connection stabilization delay
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC

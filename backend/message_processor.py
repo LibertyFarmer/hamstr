@@ -126,5 +126,20 @@ class MessageProcessor:
         socketio_logger.warning("[SYSTEM] Timeout while waiting for DATA_REQUEST")
         logging.warning("Timeout while waiting for DATA_REQUEST")
         return None
-
-    # Add any other message-related methods here
+    
+    def send_control_message(self, session, content, message_type):
+        """Send a control message with retry logic"""
+        socketio_logger.info(f"[CONTROL] Sending control message: {message_type.name}")
+        logging.info(f"Sending control message: {message_type.name}")
+        
+        for retry_count in range(config.RETRY_COUNT):
+            if self.core.send_single_packet(session, 0, 0, content.encode(), message_type):
+                logging.info(f"Control message {message_type.name} sent successfully")
+                return True
+            
+            logging.warning(f"Failed to send {message_type.name}. Attempt {retry_count + 1} of {config.RETRY_COUNT}")
+            if retry_count < config.RETRY_COUNT - 1:
+                time.sleep(config.ACK_TIMEOUT / 2)  # Shorter delay for control messages
+        
+        logging.error(f"Failed to send {message_type.name} after {config.RETRY_COUNT} attempts")
+        return False
