@@ -220,10 +220,11 @@ class ConnectionManager:
             logging.info(f"Session {session.id} already disconnecting or disconnected")
 
     def handle_incoming_connection(self):
-        while self.core.running:
+        while self.core.running:  # This is correct
             logging.debug("Waiting for incoming connection")
+            session = None  # Initialize session variable at the beginning
             try:
-                source_callsign, message, msg_type = self.core.receive_message(None, timeout=1)
+                source_callsign, message, msg_type = self.core.receive_message(None, timeout=1.0)
                 if source_callsign and msg_type == MessageType.CONNECT:
                     socketio_logger.info(f"[CONTROL] Received CONNECT request from {source_callsign}")
                     logging.info(f"Received CONNECT request from {source_callsign}")
@@ -235,8 +236,10 @@ class ConnectionManager:
                     if self.core.send_single_packet(session, 0, 0, "Connection Accepted".encode(), MessageType.CONNECT_ACK):
                         if self.core.wait_for_ack(session):
                             session.state = ModemState.CONNECTED
-                            socketio_logger.info(f"[SESSION] CONNECTED to {source_callsign[0]}-{source_callsign[1]}")
-                            logging.info(f"CONNECTED to {source_callsign[0]}-{source_callsign[1]}")
+                            # Use parsed_callsign for consistent formatting
+                            parsed_callsign = parse_callsign(source_callsign)
+                            socketio_logger.info(f"[SESSION] CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
+                            logging.info(f"CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
                             return session
                         else:
                             socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
@@ -244,10 +247,28 @@ class ConnectionManager:
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
-                    self.disconnect(session)
+                    if session:
+                        self.disconnect(session)
                 elif source_callsign and msg_type == MessageType.DATA_REQUEST:
                     socketio_logger.info(f"[CONTROL] Received DATA_REQUEST from {source_callsign}")
                     logging.info(f"Received DATA_REQUEST from {source_callsign}")
+                    
+                    # Try to find an existing session for this callsign
+                    session = None
+                    for existing_session in self.core.sessions.values():
+                        if existing_session.remote_callsign == source_callsign:
+                            session = existing_session
+                            break
+                    
+                    # If no session found, create a new one and mark as connected
+                    if not session:
+                        logging.info(f"Creating new session for previous callsign {source_callsign}")
+                        session = self.create_session(source_callsign)
+                        if session:
+                            session.state = ModemState.CONNECTED
+                            self.core.sessions[session.id] = session
+                            socketio_logger.info(f"[SESSION] Recreated session for {source_callsign[0]}-{source_callsign[1]}")
+                    
                     if session and session.state == ModemState.CONNECTED:
                         if self.core.send_ready(session):
                             if self.core.wait_for_ready(session):
@@ -263,6 +284,22 @@ class ConnectionManager:
                     else:
                         socketio_logger.error("[SYSTEM] Received DATA_REQUEST for non-connected session")
                         logging.error("Received DATA_REQUEST for non-existent or non-connected session")
+                elif source_callsign and msg_type is not None:
+                    logging.info(f"Received message: Type={msg_type}, Content={message[:50]}...")
+
+                # Only check connection timeout if we have a valid session
+                if session and hasattr(session, 'last_activity') and time.time() - session.last_activity > config.CONNECTION_TIMEOUT:
+                    logging.info(f"Connection timeout for {session.remote_callsign}")
+                    self.initiate_disconnect(session)
+                    break  # Exit the loop after disconnect
+
+                # Only disconnect if we have a valid session
+                if not self.core.running and session:  # Changed self.running to self.core.running
+                    logging.info("Server is shutting down, ending session")
+                    self.initiate_disconnect(session)
+                    break  # Exit the loop after disconnect
+
+                time.sleep(0.1)  # Small delay to prevent tight loop
             except Exception as e:
                 socketio_logger.error(f"Error in handle_incoming_connection: {str(e)}")
                 logging.error(f"Error in handle_incoming_connection: {str(e)}")

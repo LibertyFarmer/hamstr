@@ -61,9 +61,8 @@ class Core:
         return self.packet_handler.send_single_packet(session, seq_num, total_packets, packet, message_type)
 
     def send_ack(self, session, seq_num=None):
-        
         ack_message = f"ACK{f'|{seq_num:04d}' if seq_num is not None else ''}"
-        return self.send_single_packet(session, 0, 0, ack_message.encode(), MessageType.ACK)
+        return self.message_processor.send_control_message(session, ack_message, MessageType.ACK)
 
     def send_message(self, session, message, message_type):
         return self.message_processor.send_message(session, message, message_type)
@@ -185,7 +184,8 @@ class Core:
         
     def send_ready(self, session):
         logging.info("Sending READY message")
-        return self.send_single_packet(session, 0, 0, "READY".encode(), MessageType.READY)
+        return self.message_processor.send_control_message(session, "READY", MessageType.READY)
+    
 
     def wait_for_ready(self, session, timeout=config.READY_TIMEOUT):
         start_time = time.time()
@@ -373,7 +373,7 @@ class Core:
         return self.packet_handler.handle_missing_packets_sender(session, missing_packets)
     
     def send_done(self, session):
-        return self.send_single_packet(session, 0, 0, "DONE".encode(), MessageType.DONE)
+        return self.message_processor.send_control_message(session, "DONE", MessageType.DONE)
     
     def receive_done_ack(self, session, timeout=config.ACK_TIMEOUT):
         start_time = time.time()
@@ -610,7 +610,7 @@ class Core:
     def send_disconnect(self, session):
         socketio_logger.info(f"[CONTROL] Sending DISCONNECT for session: {session.id}")
         logging.info(f"Sending DISCONNECT for session: {session.id}")
-        return self.send_single_packet(session, 0, 0, "Disconnect".encode(), MessageType.DISCONNECT)
+        return self.message_processor.send_control_message(session, "Disconnect", MessageType.DISCONNECT)
 
 
     def cleanup_session(self, session):
