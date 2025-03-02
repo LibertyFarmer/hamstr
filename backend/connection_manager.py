@@ -162,7 +162,7 @@ class ConnectionManager:
         logging.info(f"Disconnecting session: {session.id}")
         if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
             session.state = ModemState.DISCONNECTING
-            # Do not call cleanup_session here
+            self.cleanup_session(session)  # Actually clean up the session
         elif session:
             socketio_logger.info(f"[SESSION] Session {session.id} already disconnecting or disconnected")
             logging.info(f"Session {session.id} already disconnecting or disconnected")

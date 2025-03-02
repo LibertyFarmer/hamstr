@@ -83,33 +83,46 @@ async def get_following_list(client, public_key):
     logging.info(f"Getting following list for: {public_key}")
     
     try:
-        contact_filter = (Filter()
-                         .authors([public_key])
-                         .kind(Kind(3))
-                         .limit(1))
+        # Make sure relays are connected with a longer timeout
+        await client.add_relays(NOSTR_RELAYS)
+        await client.connect()
         
-        source = EventSource.relays(timedelta(seconds=.5)) 
-        contacts = await client.get_events_of([contact_filter], source)
-        
-        if not contacts:
-            logging.info("No contact list found")
-            return []
-            
-        contact_event = contacts[0]
-        contact_data = json.loads(contact_event.as_json())
-        
-        followed_keys = []
-        for tag in contact_data.get('tags', []):
-            if len(tag) >= 2 and tag[0] == 'p':
-                try:
-                    followed_key = PublicKey.from_hex(tag[1])
-                    followed_keys.append(followed_key)
-                except Exception as e:
-                    logging.error(f"Error parsing pubkey {tag[1]}: {e}")
-                    continue
+        # Retry loop for contact list
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                contact_filter = (Filter()
+                               .authors([public_key])
+                               .kind(Kind(3))
+                               .limit(1))
+                
+                source = EventSource.relays(timedelta(seconds=2 * (attempt + 1)))  # Increase timeout with each attempt
+                contacts = await client.get_events_of([contact_filter], source)
+                
+                if contacts:
+                    contact_event = contacts[0]
+                    contact_data = json.loads(contact_event.as_json())
                     
-        logging.info(f"Found {len(followed_keys)} followed accounts")
-        return followed_keys
+                    followed_keys = []
+                    for tag in contact_data.get('tags', []):
+                        if len(tag) >= 2 and tag[0] == 'p':
+                            try:
+                                followed_key = PublicKey.from_hex(tag[1])
+                                followed_keys.append(followed_key)
+                            except Exception as e:
+                                logging.error(f"Error parsing pubkey {tag[1]}: {e}")
+                                continue
+                                
+                    logging.info(f"Found {len(followed_keys)} followed accounts")
+                    return followed_keys
+            except Exception as e:
+                logging.error(f"Error on attempt {attempt+1}: {e}")
+                if attempt < max_attempts - 1:
+                    logging.info(f"Retrying contact list fetch...")
+                    await asyncio.sleep(1)  # Small delay before retry
+        
+        logging.info("No contact list found after retry")
+        return []
         
     except Exception as e:
         logging.error(f"Error getting following list: {e}")
