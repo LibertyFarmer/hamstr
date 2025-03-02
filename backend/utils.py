@@ -21,17 +21,17 @@ def wait_for_specific_message(core, session, expected_type, timeout=config.ACK_T
     logging.warning(f"Timeout after {timeout} seconds while waiting for {expected_type}")
     return False
 
-def wait_for_ack(core, session, timeout=config.ACK_TIMEOUT):
+def wait_for_ack(self, session, timeout=config.ACK_TIMEOUT):
     start_time = time.time()
     while time.time() - start_time < timeout:
-        source_callsign, message, msg_type = core.receive_message(session, timeout=0.5)
+        source_callsign, message, msg_type = self.receive_message(session, timeout=0.5)
         if msg_type == MessageType.ACK:
             logging.info(f"Received ACK from {source_callsign}")
             session.last_activity = time.time()
             return True
         elif msg_type == MessageType.DISCONNECT:
             logging.info(f"Received DISCONNECT from {source_callsign}")
-            core.handle_disconnect(session)
+            self.handle_disconnect(session)
             return False
         elif msg_type is not None:
             logging.warning(f"Received unexpected message while waiting for ACK: {msg_type}")

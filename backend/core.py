@@ -188,13 +188,33 @@ class Core:
     
 
     def wait_for_ready(self, session, timeout=config.READY_TIMEOUT):
+        """Wait for a READY message from the remote station"""
         start_time = time.time()
-        while time.time() - start_time < timeout:
+        retries = 0
+        max_retries = 2  # Maximum number of internal retries
+        
+        while time.time() - start_time < timeout and retries < max_retries:
             source_callsign, message, msg_type = self.receive_message(session, timeout=0.5)
+            
             if msg_type == MessageType.READY:
                 logging.info("Received READY message")
+                session.last_activity = time.time()  # Update activity timestamp
                 return True
-        socketio_logger.warning("READY message not received within timeout")
+            elif msg_type == MessageType.DISCONNECT:
+                logging.info("Received DISCONNECT while waiting for READY")
+                self.handle_disconnect(session)
+                return False  # Return immediately when DISCONNECT is received
+            elif msg_type is not None:
+                logging.warning(f"Received unexpected message type {msg_type} while waiting for READY")
+            
+            # Check if we've spent enough time waiting to try a retry
+            if time.time() - start_time > (timeout / 2) and retries == 0:
+                # Try to resend our own READY as a prompting measure
+                logging.info("No READY received yet, sending our own READY as a prompt")
+                self.send_ready(session)
+                retries += 1
+        
+        socketio_logger.warning("[SYSTEM] READY message not received within timeout")
         logging.warning("READY message not received within timeout")
         return False
 
