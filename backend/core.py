@@ -271,7 +271,7 @@ class Core:
                     
                     start_time = time.time()
                     while time.time() - start_time < ack_timeout:
-                        source_callsign, message, msg_type = self.core.receive_message(session, timeout=0.5)
+                        source_callsign, message, msg_type = self.receive_message(session, timeout=0.5)
                         if msg_type == MessageType.ACK and message:
                             try:
                                 # Check if this is an ACK for our packet
