@@ -130,11 +130,20 @@ class MessageProcessor:
     def send_control_message(self, session, content, message_type):
         """Send a control message with retry logic"""
         socketio_logger.info(f"[CONTROL] Sending control message: {message_type.name}")
-        logging.info(f"Sending control message: {message_type.name}")
+        logging.info(f"Sending control message: {content}")
+        
+        # Add a small delay before sending READY messages
+        if message_type == MessageType.READY:
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
         
         for retry_count in range(config.RETRY_COUNT):
             if self.core.send_single_packet(session, 0, 0, content.encode(), message_type):
                 logging.info(f"Control message {message_type.name} sent successfully")
+                
+                # Add a longer delay after READY messages
+                if message_type == MessageType.READY:
+                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                    
                 return True
             
             logging.warning(f"Failed to send {message_type.name}. Attempt {retry_count + 1} of {config.RETRY_COUNT}")

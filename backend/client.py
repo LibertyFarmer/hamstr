@@ -48,7 +48,7 @@ class Client:
                 return False, None
             
             # Add a longer stabilization delay after connection established
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 3)
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC

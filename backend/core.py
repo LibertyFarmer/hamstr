@@ -199,6 +199,17 @@ class Core:
             if msg_type == MessageType.READY:
                 logging.info("Received READY message")
                 session.last_activity = time.time()  # Update activity timestamp
+                
+                # Add delay after receiving READY
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                return True
+            elif msg_type == MessageType.DATA_REQUEST:
+                # Also accept DATA_REQUEST as an alternative to READY in some cases
+                logging.info("Received DATA_REQUEST (accepting as READY equivalent)")
+                session.last_activity = time.time()
+                
+                # Add delay after receiving DATA_REQUEST
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
                 return True
             elif msg_type == MessageType.DISCONNECT:
                 logging.info("Received DISCONNECT while waiting for READY")
@@ -211,8 +222,10 @@ class Core:
             if time.time() - start_time > (timeout / 2) and retries == 0:
                 # Try to resend our own READY as a prompting measure
                 logging.info("No READY received yet, sending our own READY as a prompt")
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # Add delay before sending
                 self.send_ready(session)
                 retries += 1
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # Add delay after sending
         
         socketio_logger.warning("[SYSTEM] READY message not received within timeout")
         logging.warning("READY message not received within timeout")
