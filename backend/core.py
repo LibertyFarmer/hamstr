@@ -289,7 +289,7 @@ class Core:
                                 pass
                         elif msg_type == MessageType.DISCONNECT:
                             logging.info("Received DISCONNECT while waiting for ACK")
-                            self.core.handle_disconnect(session)
+                            self.handle_disconnect(session)
                             return False
                     
                     if ack_received:
@@ -312,12 +312,12 @@ class Core:
                 logging.error(f"Failed to send packet {seq_num} after {config.RETRY_COUNT} attempts.")
         
         # After sending all packets (or attempting to), send DONE
-        self.core.send_done(session)
+        self.send_done(session)
         
         # Wait for DONE_ACK or handle PKT_MISSING
         start_time = time.time()
         while time.time() - start_time < config.CONNECTION_TIMEOUT:
-            source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
+            source_callsign, message, msg_type = self.receive_message(session, timeout=1.0)
             if msg_type == MessageType.DONE_ACK:
                 socketio_logger.info("[CONTROL] Received DONE_ACK")
                 logging.info("Received DONE_ACK")
@@ -331,13 +331,13 @@ class Core:
                         socketio_logger.error("[SYSTEM] Empty or malformed PKT_MISSING message")
                         logging.error("Empty or malformed PKT_MISSING message")
                         # Send DONE_ACK to allow client to continue
-                        self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                        self.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                         return True
                         
-                    if self.core.packet_handler.handle_missing_packets_sender(session, message):
+                    if self.packet_handler.handle_missing_packets_sender(session, message):
                         socketio_logger.info("[CONTROL] Missing packets sent successfully")
                         logging.info("Missing packets sent successfully")
-                        self.core.send_done(session)  # Send DONE again after resending missing packets
+                        self.send_done(session)  # Send DONE again after resending missing packets
                     else:
                         socketio_logger.error("[CONTROL] Failed to send missing packets")
                         logging.error("Failed to send missing packets")
@@ -346,7 +346,7 @@ class Core:
                     socketio_logger.error(f"[SYSTEM] Error handling PKT_MISSING: {str(e)}")
                     logging.error(f"Error handling PKT_MISSING: {str(e)}")
                     # Send DONE_ACK to allow client to continue
-                    self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                    self.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                     return True
         
         logging.warning("Did not receive DONE_ACK or PKT_MISSING within timeout")
