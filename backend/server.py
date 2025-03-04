@@ -59,17 +59,29 @@ class Server:
         try:
             while self.running:
                 logging.info("Waiting for incoming connections...")
-                session = self.core.handle_incoming_connection()
-                if session:
-                    try:
-                        self.handle_connected_session(session)
-                    except Exception as e:
-                        logging.error(f"Error handling session: {e}")
-                    finally:
-                        # Move the reset here
+                try:
+                    session = self.core.handle_incoming_connection()
+                    if session:
+                        try:
+                            self.handle_connected_session(session)
+                        except Exception as e:
+                            logging.error(f"Error handling session: {e}")
+                        finally:
+                            # Always reset after a session, whether successful or not
+                            logging.info("Session ended, resetting for next connection")
+                            self.core.reset_for_next_connection()
+                    else:
+                        # Also reset if no session was returned (failed connection attempt)
+                        logging.info("Connection attempt failed or timed out, resetting for next connection")
                         self.core.reset_for_next_connection()
-                
-                self.cleanup_inactive_sessions()
+                    
+                    self.cleanup_inactive_sessions()
+                except Exception as e:
+                    logging.error(f"Error in connection handling: {e}")
+                    # Also reset on exceptions
+                    logging.info("Resetting after connection error")
+                    self.core.reset_for_next_connection()
+                    
                 time.sleep(0.1)  # Small delay to prevent tight loop
                 
         except KeyboardInterrupt:

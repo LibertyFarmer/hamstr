@@ -272,6 +272,7 @@ class ConnectionManager:
                         resend_count = 0
                         max_resends = 2
                         ack_timeout = config.ACK_TIMEOUT
+                        pending_request = None
                         
                         while time.time() - start_time < ack_timeout and not ack_received:
                             source_callsign2, message2, msg_type2 = self.core.receive_message(session, timeout=0.5)
@@ -279,6 +280,15 @@ class ConnectionManager:
                                 logging.info(f"Received ACK from {source_callsign2}")
                                 session.last_activity = time.time()
                                 ack_received = True
+                                break
+                            elif msg_type2 == MessageType.DATA_REQUEST:
+                                # Consider a DATA_REQUEST as an implicit ACK during connection
+                                logging.info(f"Received DATA_REQUEST from {source_callsign2} - treating as implicit ACK")
+                                session.last_activity = time.time()
+                                ack_received = True
+                                
+                                # Store this DATA_REQUEST for processing after connection is established
+                                pending_request = message2
                                 break
                             elif msg_type2 == MessageType.DISCONNECT:
                                 logging.info(f"Received DISCONNECT from {source_callsign2}")
@@ -302,6 +312,11 @@ class ConnectionManager:
                             socketio_logger.info(f"[SESSION] CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
                             logging.info(f"CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
                             
+                            # If we received a DATA_REQUEST during handshake, store it in the session
+                            if pending_request:
+                                session.pending_request = pending_request
+                                logging.info(f"Stored pending DATA_REQUEST for processing: {pending_request}")
+                            
                             # Clear connection tracking since we're fully connected now
                             connection_attempt_time = None
                             current_connect_session = None
@@ -310,9 +325,25 @@ class ConnectionManager:
                         else:
                             socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
                             logging.error(f"Failed to receive ACK for CONNECT_ACK from {source_callsign}")
+                            # Make sure to clean up the session here
+                            try:
+                                self.cleanup_session(session)
+                            except Exception as cleanup_error:
+                                logging.error(f"Error during failed connection cleanup: {cleanup_error}")
+                                # Force cleanup even if exception occurred
+                                if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
+                                    self.core.sessions.pop(session.id, None)
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
+                        # Make sure to clean up the session here
+                        try:
+                            self.cleanup_session(session)
+                        except Exception as cleanup_error:
+                            logging.error(f"Error during failed connection cleanup: {cleanup_error}")
+                            # Force cleanup even if exception occurred
+                            if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
+                                self.core.sessions.pop(session.id, None)
                     
                     # Note: we don't disconnect here - we'll let the timeout handle it
                 elif source_callsign and msg_type == MessageType.DATA_REQUEST:
@@ -350,9 +381,19 @@ class ConnectionManager:
                             else:
                                 socketio_logger.error("[SYSTEM] Failed to receive READY from client")
                                 logging.error("Failed to receive READY from client")
+                                # Clean up the session
+                                try:
+                                    self.cleanup_session(session)
+                                except Exception as cleanup_error:
+                                    logging.error(f"Error during failed READY cleanup: {cleanup_error}")
                         else:
                             socketio_logger.error("[SYSTEM] Failed to send READY to client")
                             logging.error("Failed to send READY to client")
+                            # Clean up the session
+                            try:
+                                self.cleanup_session(session)
+                            except Exception as cleanup_error:
+                                logging.error(f"Error during failed READY cleanup: {cleanup_error}")
                     else:
                         socketio_logger.error("[SYSTEM] Received DATA_REQUEST for non-connected session")
                         logging.error("Received DATA_REQUEST for non-existent or non-connected session")
