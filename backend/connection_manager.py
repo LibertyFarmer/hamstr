@@ -220,9 +220,30 @@ class ConnectionManager:
             logging.info(f"Session {session.id} already disconnecting or disconnected")
 
     def handle_incoming_connection(self):
-        while self.core.running:  # This is correct
+        connection_attempt_time = None
+        current_connect_session = None
+        
+        while self.core.running:
             logging.debug("Waiting for incoming connection")
             session = None  # Initialize session variable at the beginning
+            
+            # Check for stale connection attempts
+            if connection_attempt_time and current_connect_session:
+                if time.time() - connection_attempt_time > 10:  # 10 second timeout for connection establishment
+                    logging.info(f"Connection attempt timed out after 10 seconds, cleaning up")
+                    try:
+                        self.cleanup_session(current_connect_session)
+                    except Exception as e:
+                        logging.error(f"Error during connection timeout cleanup: {e}")
+                        # Force cleanup even if exception occurred
+                        if hasattr(self.core, 'sessions') and current_connect_session.id in self.core.sessions:
+                            self.core.sessions.pop(current_connect_session.id, None)
+                    finally:
+                        # Always clear these variables to prevent getting stuck
+                        connection_attempt_time = None
+                        current_connect_session = None
+                        logging.info("Connection tracking cleared after timeout")
+            
             try:
                 source_callsign, message, msg_type = self.core.receive_message(None, timeout=1.0)
                 if source_callsign and msg_type == MessageType.CONNECT:
@@ -233,13 +254,58 @@ class ConnectionManager:
                         socketio_logger.error(f"[SYSTEM] Failed to create session for {source_callsign}")
                         logging.error(f"Failed to create session for {source_callsign}")
                         continue
+                        
+                    # Track this connection attempt
+                    connection_attempt_time = time.time()
+                    current_connect_session = session
+                    
+                    # Add deliberate delay before sending CONNECT_ACK to allow client radio to switch modes
+                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # 250ms delay
+                    
                     if self.core.send_single_packet(session, 0, 0, "Connection Accepted".encode(), MessageType.CONNECT_ACK):
-                        if self.core.wait_for_ack(session):
+                        # Add another small delay after sending to ensure packet is fully transmitted
+                        time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # 250ms delay
+                        
+                        # Modified wait_for_ack with resend logic for first packet
+                        start_time = time.time()
+                        ack_received = False
+                        resend_count = 0
+                        max_resends = 2
+                        ack_timeout = config.ACK_TIMEOUT
+                        
+                        while time.time() - start_time < ack_timeout and not ack_received:
+                            source_callsign2, message2, msg_type2 = self.core.receive_message(session, timeout=0.5)
+                            if msg_type2 == MessageType.ACK:
+                                logging.info(f"Received ACK from {source_callsign2}")
+                                session.last_activity = time.time()
+                                ack_received = True
+                                break
+                            elif msg_type2 == MessageType.DISCONNECT:
+                                logging.info(f"Received DISCONNECT from {source_callsign2}")
+                                self.handle_disconnect(session)
+                                break
+                            elif msg_type2 is not None:
+                                logging.warning(f"Received unexpected message while waiting for ACK: {msg_type2}")
+                            
+                            # Resend CONNECT_ACK if no response after 1/3 of timeout
+                            if time.time() - start_time > (ack_timeout / 3) * (resend_count + 1) and resend_count < max_resends:
+                                logging.info(f"No ACK received yet, resending CONNECT_ACK (attempt {resend_count + 1})")
+                                time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # Add delay before resending
+                                self.core.send_single_packet(session, 0, 0, "Connection Accepted".encode(), MessageType.CONNECT_ACK)
+                                resend_count += 1
+                                # Add delay after resend
+                                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                        
+                        if ack_received:
                             session.state = ModemState.CONNECTED
-                            # Use parsed_callsign for consistent formatting
                             parsed_callsign = parse_callsign(source_callsign)
                             socketio_logger.info(f"[SESSION] CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
                             logging.info(f"CONNECTED to {parsed_callsign[0]}-{parsed_callsign[1]}")
+                            
+                            # Clear connection tracking since we're fully connected now
+                            connection_attempt_time = None
+                            current_connect_session = None
+                            
                             return session
                         else:
                             socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
@@ -247,8 +313,8 @@ class ConnectionManager:
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
-                    if session:
-                        self.disconnect(session)
+                    
+                    # Note: we don't disconnect here - we'll let the timeout handle it
                 elif source_callsign and msg_type == MessageType.DATA_REQUEST:
                     socketio_logger.info(f"[CONTROL] Received DATA_REQUEST from {source_callsign}")
                     logging.info(f"Received DATA_REQUEST from {source_callsign}")
@@ -270,7 +336,13 @@ class ConnectionManager:
                             socketio_logger.info(f"[SESSION] Recreated session for {source_callsign[0]}-{source_callsign[1]}")
                     
                     if session and session.state == ModemState.CONNECTED:
+                        # Add delay before sending READY
+                        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                        
                         if self.core.send_ready(session):
+                            # Add delay after sending READY
+                            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                            
                             if self.core.wait_for_ready(session):
                                 socketio_logger.info("[SYSTEM] Ready to send data")
                                 logging.info("Ready to send data")
@@ -290,19 +362,42 @@ class ConnectionManager:
                 # Only check connection timeout if we have a valid session
                 if session and hasattr(session, 'last_activity') and time.time() - session.last_activity > config.CONNECTION_TIMEOUT:
                     logging.info(f"Connection timeout for {session.remote_callsign}")
-                    self.initiate_disconnect(session)
-                    break  # Exit the loop after disconnect
-
+                    try:
+                        self.cleanup_session(session)
+                    except Exception as e:
+                        logging.error(f"Error during session timeout cleanup: {e}")
+                        # Force cleanup even if exception occurred
+                        if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
+                            self.core.sessions.pop(session.id, None)
+                    
                 # Only disconnect if we have a valid session
-                if not self.core.running and session:  # Changed self.running to self.core.running
+                if not self.core.running and session:
                     logging.info("Server is shutting down, ending session")
-                    self.initiate_disconnect(session)
-                    break  # Exit the loop after disconnect
+                    try:
+                        self.cleanup_session(session)
+                    except Exception as e:
+                        logging.error(f"Error during shutdown cleanup: {e}")
 
                 time.sleep(0.1)  # Small delay to prevent tight loop
             except Exception as e:
                 socketio_logger.error(f"Error in handle_incoming_connection: {str(e)}")
                 logging.error(f"Error in handle_incoming_connection: {str(e)}")
+                
+                # If there was an error during a connection attempt, clean it up
+                if connection_attempt_time and current_connect_session:
+                    logging.info("Cleaning up after error during connection attempt")
+                    try:
+                        self.cleanup_session(current_connect_session)
+                    except Exception as cleanup_error:
+                        logging.error(f"Error during error-triggered cleanup: {cleanup_error}")
+                        # Force cleanup even if exception occurred
+                        if hasattr(self.core, 'sessions') and current_connect_session.id in self.core.sessions:
+                            self.core.sessions.pop(current_connect_session.id, None)
+                    finally:
+                        connection_attempt_time = None
+                        current_connect_session = None
+                        logging.info("Connection tracking cleared after error")
+                
             time.sleep(0.2)  # Small delay to prevent tight loop
         logging.debug("Exited handle_incoming_connection method")
         return None

@@ -34,21 +34,39 @@ class PacketHandler:
             # Calculate checksum and append it to the content
             checksum = calculate_crc32(content.encode())
             full_packet = f"{content}|{checksum}"
-  
+
         logging.debug(f"Sending packet: {full_packet}")
         
         ax25_frame = build_ax25_frame(self.core.callsign, session.remote_callsign, full_packet.encode())
         kiss_frame = kiss_wrap(ax25_frame)
         
-        success = send_frame(session.tnc_connection, kiss_frame)
+        # Add PTT TX delay for radio to engage PTT
+        time.sleep(config.PTT_TX_DELAY)
+        
+        success = send_frame(session.tnc_connection, kiss_frame, is_ack=(message_type == MessageType.ACK))
         if success:
             estimated_time = estimate_transmission_time(len(kiss_frame))
-            socketio_logger.info(f"[CONTROL] Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}, Estimated transmission time: {estimated_time:.2f} seconds")
+            
+            # Add additional delay based on message type
+            if message_type == MessageType.ACK:
+                # Shorter delay for ACKs as they don't need a response
+                additional_delay = config.PTT_TAIL
+            elif message_type in [MessageType.CONNECT, MessageType.CONNECT_ACK, MessageType.READY]:
+                # Longer delay for control messages that require a response
+                additional_delay = config.PTT_ACK_SPACING
+            else:
+                # Standard delay for data packets
+                additional_delay = config.PTT_RX_DELAY
+                
+            total_delay = estimated_time + additional_delay
+            
+            socketio_logger.info(f"[CONTROL] Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}, Estimated transmission time: {total_delay:.2f} seconds")
             logging.info(f"Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
             
-            #socketio_logger.info(f"[PACKET] Estimated transmission time: {estimated_time:.2f} seconds")
-            logging.info(f"Estimated transmission time: {estimated_time:.2f} seconds")
-            time.sleep(estimated_time)
+            logging.info(f"Estimated transmission time: {estimated_time:.2f} seconds, Adding delay: {additional_delay:.2f} seconds")
+            
+            # Wait for the packet to be fully transmitted plus the additional delay
+            time.sleep(total_delay)
         else:
             socketio_logger.error(f"[PACKET] Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
             logging.error(f"Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
