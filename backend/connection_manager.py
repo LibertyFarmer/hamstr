@@ -98,10 +98,17 @@ class ConnectionManager:
                 socketio_logger.info(f"[SESSION] Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...")
                 logging.info(f"Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...")
                 if self.core.wait_for_specific_message(session, MessageType.CONNECT_ACK, timeout=config.CONNECTION_ATTEMPT_TIMEOUT):
+                    # Add a significant delay after receiving CONNECT_ACK before sending ACK
+                    time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
+                    
                     if self.core.send_ack(session):
                         session.state = ModemState.CONNECTED
                         socketio_logger.info(f"[SESSION] CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         logging.info(f"CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
+                        
+                        # Add another delay to let the ACK fully transmit
+                        time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
+                        
                         return session
                     else:
                         socketio_logger.error("[CONTROL] Failed to send ACK")

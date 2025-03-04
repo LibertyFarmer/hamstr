@@ -47,8 +47,8 @@ class Client:
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-            # Add a connection stabilization delay
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+            # Add a longer stabilization delay after connection established
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 3)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC
@@ -68,6 +68,9 @@ class Client:
                 request = f"{request}|{additional_params}"
                 
             logging.info(f"Sending request: {request}")
+            
+            # Add significant delay before sending DATA_REQUEST
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
             
             for attempt in range(config.RETRY_COUNT):
                 if self.core.send_data_request(self.session, request):
