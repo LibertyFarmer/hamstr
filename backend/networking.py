@@ -44,22 +44,9 @@ def send_frame(connection, frame, is_ack=False, delay_factor=0.001):
         else:
             sock = connection  # Assume it's already a socket object
 
-        # Add a small delay before transmission to allow radio PTT to engage
-        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
-        
-        # Send the data
         sock.sendall(frame)
-        
-        # Calculate transmission time based on frame size and baud rate
-        # Add small buffer for radio tail and for receiver to be ready
-        transmission_time = estimate_transmission_time(len(frame))
-        
-        # Use longer delay for ACKs to ensure they're received
-        if is_ack:
-            time.sleep(transmission_time * 1.5)
-        else:
-            time.sleep(transmission_time)
-            
+        if not is_ack:
+            time.sleep(len(frame) * delay_factor)
         logging.debug("Sent Data")
         return True
     except Exception as e:
