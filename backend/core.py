@@ -258,37 +258,66 @@ class Core:
         
         for seq_num, packet in enumerate(packets, 1):
             retries = 0
-            while retries < config.RETRY_COUNT:
+            ack_received = False
+            while retries < config.RETRY_COUNT and not ack_received:
                 if self.send_single_packet(session, seq_num, total_packets, packet, MessageType.RESPONSE):
                     session.sent_packets[seq_num] = packet
-                    if self.wait_for_ack(session):
-                        session.acked_packets.add(seq_num)
-                        progress = (len(session.acked_packets) / total_packets) * 100
-                        socketio_logger.info(f"[PACKET] Sent packet {seq_num}/{total_packets} - Progress: {progress:.2f}%")
-                        logging.info(f"Sent packet {seq_num}/{total_packets} - Progress: {progress:.2f}%")
+                    
+                    # Wait longer for ACK on first packet, which seems to be problematic
+                    ack_timeout = config.ACK_TIMEOUT * (2 if seq_num == 1 else 1)
+                    
+                    # Add a small delay before starting to listen for ACK
+                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                    
+                    start_time = time.time()
+                    while time.time() - start_time < ack_timeout:
+                        source_callsign, message, msg_type = self.core.receive_message(session, timeout=0.5)
+                        if msg_type == MessageType.ACK and message:
+                            try:
+                                # Check if this is an ACK for our packet
+                                if "|" in message:
+                                    _, ack_seq = message.split("|", 1)
+                                    if int(ack_seq) == seq_num:
+                                        session.acked_packets.add(seq_num)
+                                        progress = (len(session.acked_packets) / total_packets) * 100
+                                        socketio_logger.info(f"[PACKET] Sent packet {seq_num}/{total_packets} - Progress: {progress:.2f}%")
+                                        logging.info(f"Sent packet {seq_num}/{total_packets} - Progress: {progress:.2f}%")
+                                        ack_received = True
+                                        break
+                            except (ValueError, IndexError):
+                                # If we can't parse the ACK, assume it's not for us
+                                pass
+                        elif msg_type == MessageType.DISCONNECT:
+                            logging.info("Received DISCONNECT while waiting for ACK")
+                            self.core.handle_disconnect(session)
+                            return False
+                    
+                    if ack_received:
                         break
-                    else:
-                        socketio_logger.warning(f"[CONTROL] Failed to receive ACK for packet {seq_num}")
-                        logging.warning(f"Failed to receive ACK for packet {seq_num}")
+                        
+                    socketio_logger.warning(f"[CONTROL] Failed to receive ACK for packet {seq_num}")
+                    logging.warning(f"Failed to receive ACK for packet {seq_num}")
                 else:
                     socketio_logger.warning(f"[CONTROL] Failed to send packet {seq_num}")
                     logging.warning(f"Failed to send packet {seq_num}")
+                    
                 retries += 1
                 if retries < config.RETRY_COUNT:
                     socketio_logger.info(f"[PACKET] Retrying to send packet {seq_num}. Attempt {retries + 1}")
                     logging.info(f"Retrying to send packet {seq_num}. Attempt {retries + 1}")
                     time.sleep(config.ACK_TIMEOUT)
             
-            if retries == config.RETRY_COUNT:
+            if retries == config.RETRY_COUNT and not ack_received:
                 socketio_logger.error(f"[PACKET] Failed to send packet {seq_num} after {config.RETRY_COUNT} attempts.")
                 logging.error(f"Failed to send packet {seq_num} after {config.RETRY_COUNT} attempts.")
         
-        self.send_done(session)
+        # After sending all packets (or attempting to), send DONE
+        self.core.send_done(session)
         
         # Wait for DONE_ACK or handle PKT_MISSING
         start_time = time.time()
         while time.time() - start_time < config.CONNECTION_TIMEOUT:
-            source_callsign, message, msg_type = self.receive_message(session, timeout=1.0)
+            source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
             if msg_type == MessageType.DONE_ACK:
                 socketio_logger.info("[CONTROL] Received DONE_ACK")
                 logging.info("Received DONE_ACK")
@@ -296,14 +325,29 @@ class Core:
             elif msg_type == MessageType.PKT_MISSING:
                 socketio_logger.info(f"[CONTROL] Received PKT_MISSING request: {message}")
                 logging.info(f"Received PKT_MISSING request: {message}")
-                if self.packet_handler.handle_missing_packets_sender(session, message):
-                    socketio_logger.info("[CONTROL] Missing packets sent successfully")
-                    logging.info("Missing packets sent successfully")
-                    self.send_done(session)  # Send DONE again after resending missing packets
-                else:
-                    socketio_logger.error("[CONTROL] Failed to send missing packets")
-                    logging.error("Failed to send missing packets")
-                    return False
+                try:
+                    # Handle empty or malformed PKT_MISSING messages
+                    if not message or "|" not in message or len(message.split("|", 1)[1].strip()) == 0:
+                        socketio_logger.error("[SYSTEM] Empty or malformed PKT_MISSING message")
+                        logging.error("Empty or malformed PKT_MISSING message")
+                        # Send DONE_ACK to allow client to continue
+                        self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                        return True
+                        
+                    if self.core.packet_handler.handle_missing_packets_sender(session, message):
+                        socketio_logger.info("[CONTROL] Missing packets sent successfully")
+                        logging.info("Missing packets sent successfully")
+                        self.core.send_done(session)  # Send DONE again after resending missing packets
+                    else:
+                        socketio_logger.error("[CONTROL] Failed to send missing packets")
+                        logging.error("Failed to send missing packets")
+                        return False
+                except Exception as e:
+                    socketio_logger.error(f"[SYSTEM] Error handling PKT_MISSING: {str(e)}")
+                    logging.error(f"Error handling PKT_MISSING: {str(e)}")
+                    # Send DONE_ACK to allow client to continue
+                    self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                    return True
         
         logging.warning("Did not receive DONE_ACK or PKT_MISSING within timeout")
         socketio_logger.warning("[SYSTEM] Did not receive DONE_ACK or PKT_MISSING within timeout")
@@ -558,6 +602,11 @@ class Core:
         return self.packet_handler.get_missing_packets(received_packets, total_packets)
     
     def request_missing_packets(self, session, missing_packets, update_packet_func):
+        # Add check for empty missing packets list
+        if not missing_packets:
+            logging.warning("Empty missing packets list, not sending PKT_MISSING")
+            return True  # Return true since there's nothing missing
+            
         request = f"PKT_MISSING|{'|'.join(map(str, missing_packets))}"
         if self.send_single_packet(session, 0, 0, request.encode(), MessageType.PKT_MISSING):
             if self.wait_for_ready(session, timeout=config.ACK_TIMEOUT * 2):

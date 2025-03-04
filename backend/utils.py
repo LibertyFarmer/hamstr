@@ -26,13 +26,27 @@ def wait_for_ack(core, session, timeout=config.ACK_TIMEOUT, resend_message=None,
     start_time = time.time()
     resend_count = 0
     max_resends = 2
+    ack_wait_start = time.time()
+    
+    # Add a small delay before starting to wait for ACK to give client time to process
+    time.sleep(config.CONNECTION_STABILIZATION_DELAY)
     
     while time.time() - start_time < timeout:
         source_callsign, message, msg_type = core.receive_message(session, timeout=0.5)
         if msg_type == MessageType.ACK:
-            logging.info(f"Received ACK from {source_callsign}")
-            session.last_activity = time.time()
-            return True
+            # Check if the ACK contains a sequence number
+            if message and "|" in message:
+                _, seq_num = message.split("|", 1)
+                logging.info(f"Received ACK with sequence number {seq_num} from {source_callsign}")
+                session.last_activity = time.time()
+                
+                # Return True if this is the ACK we're waiting for
+                return True
+            else:
+                logging.info(f"Received general ACK from {source_callsign}")
+                session.last_activity = time.time()
+                return True
+                
         elif msg_type == MessageType.DISCONNECT:
             logging.info(f"Received DISCONNECT from {source_callsign}")
             core.handle_disconnect(session)
@@ -40,22 +54,18 @@ def wait_for_ack(core, session, timeout=config.ACK_TIMEOUT, resend_message=None,
         elif msg_type is not None:
             logging.warning(f"Received unexpected message while waiting for ACK: {msg_type}")
         
-        # Add exponential backoff for retries
-        if resend_message and resend_type and time.time() - start_time > (timeout / 3) * (resend_count + 1) and resend_count < max_resends:
-            # Calculate backoff time - exponential with some randomness to prevent collisions
-            backoff_time = (config.PTT_ACK_SPACING * (1.5 ** resend_count)) + (random.random() * 0.2)
-            logging.info(f"Backing off for {backoff_time:.2f} seconds before retry {resend_count + 1}")
-            time.sleep(backoff_time)
+        # Add a more patient retry mechanism
+        if resend_message and resend_type and time.time() - ack_wait_start > (timeout / 3) and resend_count < max_resends:
+            # Calculate wait time before retry - grows with each retry
+            wait_time = config.CONNECTION_STABILIZATION_DELAY * (1 + resend_count)
+            logging.info(f"Waiting {wait_time:.2f} seconds before retry attempt {resend_count + 1}")
+            time.sleep(wait_time)
             
-            # Add PTT TX delay before sending
-            time.sleep(config.PTT_TX_DELAY)
-            
-            # Then resend
+            # Then try resending
+            logging.info(f"No ACK received yet, resending message (attempt {resend_count + 1})")
             core.send_single_packet(session, 0, 0, resend_message, resend_type)
             resend_count += 1
-            
-            # Add additional wait after sending to allow radio to switch back to receive
-            time.sleep(config.PTT_RX_DELAY)
+            ack_wait_start = time.time()  # Reset the ack wait timer
     
     logging.warning("ACK not received within timeout")
     return False

@@ -113,6 +113,28 @@ class Client:
                 self.disconnect()
 
         return False, None
+    
+    def send_packet_ack(self, session, seq_num, max_retries=2):
+        """Send an ACK for a specific packet with proper timing and retries."""
+        # Add a small delay before sending ACK to ensure radio is ready
+        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+        
+        # Use the sequence number in the ACK message
+        ack_message = f"ACK|{seq_num:04d}"
+        
+        for retry in range(max_retries):
+            success = self.core.message_processor.send_control_message(session, ack_message, MessageType.ACK)
+            if success:
+                # Add additional delay after sending ACK
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                return True
+            
+            if retry < max_retries - 1:
+                logging.warning(f"ACK send attempt {retry+1} failed, retrying...")
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+        
+        logging.error(f"Failed to send ACK for packet {seq_num} after {max_retries} attempts")
+        return False
         
     def connect_and_send_note(self, server_callsign, note):
         if not self.session or self.session.state == ModemState.DISCONNECTED:
