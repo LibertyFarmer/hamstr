@@ -378,6 +378,17 @@ def request_notes(count):
             additional_params = None
             socketio_logger.info("[SYSTEM] Requesting global feed")
 
+        # Calculate a dynamic timeout based on the number of notes requested
+        # More notes = longer timeout
+        dynamic_timeout = max(config.CONNECTION_TIMEOUT, count * 60)  # At least 60s per note
+        
+        # Store original timeout to restore later
+        original_timeout = config.CONNECTION_TIMEOUT
+        # Temporarily override the timeout
+        config.CONNECTION_TIMEOUT = dynamic_timeout
+        
+        socketio_logger.info(f"[SYSTEM] Using extended timeout of {dynamic_timeout} seconds for {count} notes")
+        
         result_container = []
         def request_notes_thread():
             global radio_operation_in_progress
@@ -393,13 +404,18 @@ def request_notes(count):
                     result_container.append((success, response))
                 finally:
                     radio_operation_in_progress = False
+                    # Restore original timeout
+                    config.CONNECTION_TIMEOUT = original_timeout
 
         thread = threading.Thread(target=request_notes_thread)
         thread.start()
-        thread.join(timeout=config.CONNECTION_TIMEOUT)
+        thread.join(timeout=dynamic_timeout + 30)  # Allow extra time for thread cleanup
 
         if thread.is_alive():
+            # Thread is still running after timeout
             socketio_logger.error("[CLIENT] Request timeout")
+            # Restore original timeout
+            config.CONNECTION_TIMEOUT = original_timeout
             return jsonify({
                 "success": False,
                 "message": "Failed to connect to TNC - operation timed out"
@@ -464,6 +480,9 @@ def request_notes(count):
 
     except Exception as e:
         socketio_logger.error(f"[CLIENT] Error in request_notes: {str(e)}")
+        # Make sure to restore original timeout if there was an exception
+        if 'original_timeout' in locals():
+            config.CONNECTION_TIMEOUT = original_timeout
         return jsonify({
             "success": False,
             "message": "Failed to connect to TNC"
