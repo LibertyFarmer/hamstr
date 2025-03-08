@@ -34,21 +34,42 @@ class PacketHandler:
             # Calculate checksum and append it to the content
             checksum = calculate_crc32(content.encode())
             full_packet = f"{content}|{checksum}"
-  
+
         logging.debug(f"Sending packet: {full_packet}")
         
         ax25_frame = build_ax25_frame(self.core.callsign, session.remote_callsign, full_packet.encode())
         kiss_frame = kiss_wrap(ax25_frame)
         
-        success = send_frame(session.tnc_connection, kiss_frame)
+        # Add PTT TX delay for radio to engage PTT
+        time.sleep(config.PTT_TX_DELAY)
+        
+        success = send_frame(session.tnc_connection, kiss_frame, is_ack=(message_type == MessageType.ACK))
         if success:
             estimated_time = estimate_transmission_time(len(kiss_frame))
-            socketio_logger.info(f"[CONTROL] Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}, Estimated transmission time: {estimated_time:.2f} seconds")
+            
+            # Add additional delay based on message type
+            if message_type == MessageType.ACK:
+                # Shorter delay for ACKs as they don't need a response
+                additional_delay = config.PTT_TAIL
+            elif message_type in [MessageType.CONNECT, MessageType.CONNECT_ACK, MessageType.READY]:
+                # Longer delay for control messages that require a response
+                additional_delay = config.PTT_ACK_SPACING
+            elif message_type == MessageType.RESPONSE:
+                # Extra long delay for RESPONSE packets to ensure client has time to process and ACK
+                additional_delay = config.PTT_ACK_SPACING * 1.5
+            else:
+                # Standard delay for data packets
+                additional_delay = config.PTT_RX_DELAY
+                
+            total_delay = estimated_time + additional_delay
+            
+            socketio_logger.info(f"[CONTROL] Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}, Estimated transmission time: {total_delay:.2f} seconds")
             logging.info(f"Sending packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
             
-            #socketio_logger.info(f"[PACKET] Estimated transmission time: {estimated_time:.2f} seconds")
-            logging.info(f"Estimated transmission time: {estimated_time:.2f} seconds")
-            time.sleep(estimated_time)
+            logging.info(f"Estimated transmission time: {estimated_time:.2f} seconds, Adding delay: {additional_delay:.2f} seconds")
+            
+            # Wait for the packet to be fully transmitted plus the additional delay
+            time.sleep(total_delay)
         else:
             socketio_logger.error(f"[PACKET] Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
             logging.error(f"Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
@@ -86,51 +107,60 @@ class PacketHandler:
     def check_missing_packets(self, session):
         return set(range(1, session.total_packets + 1)) - session.acked_packets
 
-    def handle_missing_packets_sender(self, session, missing_packets):
-        if isinstance(missing_packets, str):
-            try:
-                _, missing_packets_str = missing_packets.split('|', 1)
-                missing_packets = list(map(int, missing_packets_str.split('|')))
-            except ValueError:
-                socketio_logger.error("[SYSTEM] Invalid PKT_MISSING message format")
-                logging.error("Invalid PKT_MISSING message format")
-                return False
-        
-        logging.info(f"Handling missing packets: {missing_packets}")
-        socketio_logger.info(f"[SYSTEM] Handling missing packets: {missing_packets}")
-        
-        if self.core.send_ready(session):
-            if self.core.wait_for_ready(session, timeout=config.ACK_TIMEOUT * 2):
-                for seq_num in missing_packets:
-                    packet = self.get_packet(session, seq_num)
-                    if packet:
-                        if self.send_single_packet(session, seq_num, session.total_packets, packet, MessageType.RESPONSE):
-                            if self.core.wait_for_ack(session):
-                                socketio_logger.info(f"[SYSTEM] Successfully resent packet {seq_num}")
-                                logging.info(f"Successfully resent packet {seq_num}")
+    def handle_missing_packets_sender(self, session, missing_packets_message):
+        try:
+            if isinstance(missing_packets_message, str):
+                parts = missing_packets_message.split('|', 1)
+                if len(parts) < 2 or not parts[1].strip():
+                    socketio_logger.error("[SYSTEM] Empty or malformed PKT_MISSING message format")
+                    logging.error("Empty or malformed PKT_MISSING message format")
+                    # Send an empty DONE_ACK to allow the client to continue
+                    self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                    return False
+                    
+                missing_packets = list(map(int, parts[1].split('|')))
+            
+            logging.info(f"Handling missing packets: {missing_packets}")
+            socketio_logger.info(f"[SYSTEM] Handling missing packets: {missing_packets}")
+            
+            if self.core.send_ready(session):
+                if self.core.wait_for_ready(session, timeout=config.ACK_TIMEOUT * 2):
+                    for seq_num in missing_packets:
+                        packet = self.get_packet(session, seq_num)
+                        if packet:
+                            if self.send_single_packet(session, seq_num, session.total_packets, packet, MessageType.RESPONSE):
+                                if self.core.wait_for_ack(session):
+                                    socketio_logger.info(f"[SYSTEM] Successfully resent packet {seq_num}")
+                                    logging.info(f"Successfully resent packet {seq_num}")
+                                else:
+                                    socketio_logger.warning(f"[SYSTEM] Failed to receive ACK for resent packet {seq_num}")
+                                    logging.warning(f"Failed to receive ACK for resent packet {seq_num}")
+                                    return False
                             else:
-                                socketio_logger.warning(f"[SYSTEM] Failed to receive ACK for resent packet {seq_num}")
-                                logging.warning(f"Failed to receive ACK for resent packet {seq_num}")
+                                socketio_logger.error(f"[SYSTEM] Failed to resend packet {seq_num}")
+                                logging.error(f"Failed to resend packet {seq_num}")
                                 return False
                         else:
-                            socketio_logger.error(f"[SYSTEM] Failed to resend packet {seq_num}")
-                            logging.error(f"Failed to resend packet {seq_num}")
+                            socketio_logger.error(f"[SYSTEM] Could not find packet {seq_num} for resending")
+                            logging.error(f"Could not find packet {seq_num} for resending")
                             return False
-                    else:
-                        socketio_logger.error(f"[SYSTEM] Could not find packet {seq_num} for resending")
-                        logging.error(f"Could not find packet {seq_num} for resending")
-                        return False
-                
-                logging.info("All missing packets sent successfully")
-                socketio_logger.info("[SYSTEM] All missing packets sent successfully")
-                return True
+                    
+                    logging.info("All missing packets sent successfully")
+                    socketio_logger.info("[SYSTEM] All missing packets sent successfully")
+                    return True
+                else:
+                    socketio_logger.error("[SYSTEM] Did not receive READY message from receiver")
+                    logging.error("Did not receive READY message from receiver")
+                    return False
             else:
-                socketio_logger.error("[SYSTEM] Did not receive READY message from receiver")
-                logging.error("Did not receive READY message from receiver")
+                socketio_logger.error("[SYSTEM] Failed to send READY for missing packets")
+                logging.error("Failed to send READY for missing packets")
                 return False
-        else:
-            socketio_logger.error("[SYSTEM] Failed to send READY for missing packets")
-            logging.error("Failed to send READY for missing packets")
+        except (ValueError, IndexError) as e:
+            socketio_logger.error(f"[SYSTEM] Error parsing PKT_MISSING message: {str(e)}")
+            logging.error(f"Error parsing PKT_MISSING message: {str(e)}")
+            # Send an empty DONE_ACK to allow the client to continue
+            self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
             return False
 
     def get_packet(self, session, seq_num):

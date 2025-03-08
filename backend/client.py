@@ -47,8 +47,8 @@ class Client:
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-            # Add a connection stabilization delay
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+            # Add a moderate stabilization delay after connection established
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC
@@ -69,11 +69,18 @@ class Client:
                 
             logging.info(f"Sending request: {request}")
             
+            # Add significant delay before sending DATA_REQUEST
+            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
+            
             for attempt in range(config.RETRY_COUNT):
                 if self.core.send_data_request(self.session, request):
                     socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
                     logging.info("DATA_REQUEST sent and READY state achieved")
+                    
+                    # Use the core receive_response method without passing a timeout
+                    # The method will use the global CONNECTION_TIMEOUT from config
                     response = self.core.receive_response(self.session)
+                    
                     if response:
                         try:
                             response_data = json.loads(response)
@@ -89,7 +96,7 @@ class Client:
                         decompressed_response = decompress_nostr_data(response)
                         socketio_logger.info(f"[CLIENT] JSON NOTE: {decompressed_response}")
                         logging.info(f"Server response: {decompressed_response}")
-                        return True, response  # Keep returning the compressed response
+                        return True, response
                     else:
                         socketio_logger.error("[CLIENT] No response received from server")
                         logging.error("No response received from server")
@@ -110,6 +117,28 @@ class Client:
                 self.disconnect()
 
         return False, None
+    
+    def send_packet_ack(self, session, seq_num, max_retries=2):
+        """Send an ACK for a specific packet with proper timing and retries."""
+        # Add a small delay before sending ACK to ensure radio is ready
+        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+        
+        # Use the sequence number in the ACK message
+        ack_message = f"ACK|{seq_num:04d}"
+        
+        for retry in range(max_retries):
+            success = self.core.message_processor.send_control_message(session, ack_message, MessageType.ACK)
+            if success:
+                # Add additional delay after sending ACK
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                return True
+            
+            if retry < max_retries - 1:
+                logging.warning(f"ACK send attempt {retry+1} failed, retrying...")
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+        
+        logging.error(f"Failed to send ACK for packet {seq_num} after {max_retries} attempts")
+        return False
         
     def connect_and_send_note(self, server_callsign, note):
         if not self.session or self.session.state == ModemState.DISCONNECTED:

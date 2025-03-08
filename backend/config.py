@@ -74,7 +74,6 @@ CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'CONNECTION_ATTEMPT_TIMEOU
 SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'SHUTDOWN_TIMEOUT')
 PACKET_SEND_DELAY = config.getfloat('GENERAL', 'PACKET_SEND_DELAY')
 DISCONNECT_TIMEOUT = config.getint('GENERAL', 'DISCONNECT_TIMEOUT')
-DISCONNECT_TIMEOUT = config.getint('GENERAL', 'DISCONNECT_TIMEOUT')
 MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'MISSING_PACKETS_TIMEOUT')
 BAUD_RATE = config.getint('GENERAL', 'BAUD_RATE')
 NO_ACK_TIMEOUT = config.getint('GENERAL', 'NO_ACK_TIMEOUT')
@@ -84,3 +83,24 @@ MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'MISSING_PACKETS_THRESHOL
 DEFAULT_NOTE_REQUEST_COUNT = config.getint('NOSTR', 'DEFAULT_NOTE_REQUEST_COUNT')
 NOSTR_RELAYS = get_relay_list()
 CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'CONNECTION_STABILIZATION_DELAY')
+
+# Load PTT-specific settings with default values if not found
+try:
+    PTT_TX_DELAY = config.getfloat('PTT', 'tx_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_TX_DELAY = 0.25  # Default TX delay in seconds
+
+try:
+    PTT_RX_DELAY = config.getfloat('PTT', 'rx_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_RX_DELAY = 0.25  # Default RX delay in seconds
+
+try:
+    PTT_TAIL = config.getfloat('PTT', 'ptt_tail')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_TAIL = 0.1  # Default PTT tail in seconds
+
+try:
+    PTT_ACK_SPACING = config.getfloat('PTT', 'ack_spacing')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_ACK_SPACING = 0.5  # Default ACK spacing in seconds
