@@ -40,12 +40,6 @@ class Client:
             count: Number of notes to request
             additional_params: Optional string of additional parameters
         """
-        # Calculate a dynamic timeout based on the number of notes requested
-        # More notes = longer timeout
-        request_timeout = max(config.CONNECTION_TIMEOUT, count * 60)  # At least 60 seconds per note
-        
-        start_time = time.time()
-        
         if not self.session or self.session.state == ModemState.DISCONNECTED:
             self.session = self.core.connect(server_callsign)
             if not self.session:
@@ -57,8 +51,18 @@ class Client:
             time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
 
         try:
-            # Existing code for preparing request...
-            
+            # For specific user requests, derive NPUB from stored NSEC
+            if request_type == NoteRequestType.SPECIFIC_USER and additional_params is None:
+                npub = self.core.get_npub()
+                if not npub:
+                    socketio_logger.error("[CLIENT] No NPUB available - please set up NOSTR key first")
+                    return False, {
+                        "success": False,
+                        "message": "NOSTR key not set up"
+                    }
+                additional_params = npub
+
+                # Format request with space and pipe separation
             request = f"GET_NOTES {request_type.value}|{count}"
             if additional_params:
                 request = f"{request}|{additional_params}"
@@ -73,16 +77,9 @@ class Client:
                     socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
                     logging.info("DATA_REQUEST sent and READY state achieved")
                     
-                    # Check remaining time for timeout
-                    elapsed_time = time.time() - start_time
-                    if elapsed_time > request_timeout:
-                        socketio_logger.error(f"[CLIENT] Request timeout after {elapsed_time:.1f} seconds")
-                        logging.error(f"Request timeout after {elapsed_time:.1f} seconds")
-                        return False, None
-                        
-                    # Use the remaining time as the timeout for receiving response
-                    remaining_time = request_timeout - elapsed_time
-                    response = self.core.receive_response(self.session, timeout=remaining_time)
+                    # Use the core receive_response method without passing a timeout
+                    # The method will use the global CONNECTION_TIMEOUT from config
+                    response = self.core.receive_response(self.session)
                     
                     if response:
                         try:
