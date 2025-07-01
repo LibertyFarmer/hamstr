@@ -9,6 +9,10 @@ server_callsign_path = pathlib.Path(__file__).parent.absolute() / "data/server_s
 config = configparser.ConfigParser()
 config.read([config_path, client_callsign_path, server_callsign_path])
 
+server_config = configparser.ConfigParser()
+server_config.read(server_callsign_path)
+
+
 def update_config(section, option, value):
     """Update the settings in the appropriate INI file."""
     config.read(config_path)  # Always read settings.ini first
@@ -51,7 +55,7 @@ def parse_tuple(input):
 # Add new settings for relays list - server only pull in future!
 def get_relay_list() -> List[str]:
     """Get list of relays from config."""
-    relay_string = config.get('NOSTR', 'relays')
+    relay_string = server_config.get('NOSTR', 'RELAYS')
     return [relay.strip() for relay in relay_string.split(',')]
 
 #Import from settings here:
@@ -59,7 +63,7 @@ def get_relay_list() -> List[str]:
 CLIENT_HOST = config.get('TNC','CLIENT_HOST')
 CLIENT_PORT = config.getint('TNC','CLIENT_PORT')
 SERVER_HOST = config.get('TNC','SERVER_HOST')
-SERVER_PORT = config.getint('TNC','SERVER_PORT')
+SERVER_PORT = server_config.getint('TNC', 'SERVER_PORT')
 C_CALLSIGN = parse_tuple(config.get('RADIO','CLIENT_CALLSIGN'))
 S_CALLSIGN = parse_tuple(config.get('RADIO','SERVER_CALLSIGN'))
 RETRY_COUNT = config.getint('GENERAL','SEND_RETRIES')
