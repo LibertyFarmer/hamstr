@@ -1,6 +1,8 @@
 backend/data/client_callsign.ini
 backend/data/server_callsign.ini
 **/data/
+!**/data/*.template
+!**/data/**/*.template
 frontend/.svelte-kit/ambient.d.ts
 frontend/.svelte-kit/non-ambient.d.ts
 frontend/.svelte-kit/tsconfig.json
