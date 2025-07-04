@@ -2,7 +2,9 @@ backend/data/client_settings.ini
 backend/data/server_settings.ini
 !**/data/*.template
 **/data/
-/dist/
+**/dist/
+build/
+.svelte-kit/
 frontend/.svelte-kit/ambient.d.ts
 frontend/.svelte-kit/non-ambient.d.ts
 frontend/.svelte-kit/tsconfig.json
