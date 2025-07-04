@@ -15133,3 +15133,5 @@ frontend/build/_app/immutable/entry/start.dd-wCRcs.js
 frontend/build/_app/immutable/nodes/0.Ds-AzQvj.js
 frontend/build/_app/immutable/nodes/1.CILuIFNb.js
 frontend/build/_app/immutable/nodes/3.DxaRZEY8.js
+backend/data/server_settings.ini
+backend/data/client_settings.ini
