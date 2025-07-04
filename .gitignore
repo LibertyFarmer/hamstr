@@ -1,5 +1,5 @@
-backend/data/client_callsign.ini
-backend/data/server_callsign.ini
+backend/data/client_settings.ini
+backend/data/server_settings.ini
 !**/data/*.template
 **/data/
 /dist/
