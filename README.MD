@@ -66,18 +66,23 @@ cd ..
 
 ### Server Setup - Once repo cloned on server
 
-1. On server, edit `/backend/settings.ini`:
+1. **Create server settings from template:**
 
+   cd backend/data
+   cp server_settings.ini.template server_settings.ini
+
+
+2. On server, edit `/backend/data/server_settings.ini`:
+
+   - Set server callsign and SSID
    - Configure TNC port if different from default (Default: 8002)
    - Optional: Modify or add to default NOSTR relay list
 
-2. On server, edit `/backend/data/server_settings.ini`:
-   - Set server callsign and SSID
 
 3. To Run the server:
-   ```bash
+
    python server.py
-   ```
+
 
 ## Current Features
 

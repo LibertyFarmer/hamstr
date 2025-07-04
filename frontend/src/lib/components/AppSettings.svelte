@@ -19,7 +19,7 @@
     GENERAL_BAUD_RATE: '',
     GENERAL_SEND_RETRIES: '',
     RADIO_CLIENT_CALLSIGN: ['', 0],
-    RADIO_SERVER_CALLSIGN: ['', 0],
+    RADIO_HAMSTR_SERVER: ['', 0],
     NOSTR_DEFAULT_NOTE_REQUEST_COUNT: ''
 
   };
@@ -49,7 +49,7 @@
       settings = {
         ...data,
         RADIO_CLIENT_CALLSIGN: parseCallsign(data.RADIO_CLIENT_CALLSIGN),
-        RADIO_SERVER_CALLSIGN: parseCallsign(data.RADIO_SERVER_CALLSIGN),
+        RADIO_HAMSTR_SERVER: parseCallsign(data.RADIO_HAMSTR_SERVER),
         GENERAL_BAUD_RATE: data.GENERAL_BAUD_RATE.toString()
       };
 
@@ -71,9 +71,9 @@
                 callsign: settings.RADIO_CLIENT_CALLSIGN[0],
                 ssid: parseInt(settings.RADIO_CLIENT_CALLSIGN[1])
             },
-            RADIO_SERVER_CALLSIGN: {
-                callsign: settings.RADIO_SERVER_CALLSIGN[0],
-                ssid: parseInt(settings.RADIO_SERVER_CALLSIGN[1])
+            RADIO_HAMSTR_SERVER: {
+                callsign: settings.RADIO_HAMSTR_SERVER[0],
+                ssid: parseInt(settings.RADIO_HAMSTR_SERVER[1])
             },
             // Add this line to ensure the note request count is included
             NOSTR_DEFAULT_NOTE_REQUEST_COUNT: parseInt(settings.NOSTR_DEFAULT_NOTE_REQUEST_COUNT)
@@ -182,13 +182,13 @@
           </div>
         </div>
         <div class="space-y-2">
-          <Label for="server-callsign">Server Callsign</Label>
+          <Label for="server-callsign">Target Server Callsign</Label>
           <div class="flex items-center space-x-4">
             <Input 
-              id="server-callsign"
+              id="target-callsign"
               class="flex-grow"
               type="text" 
-              bind:value={settings.RADIO_SERVER_CALLSIGN[0]} 
+              bind:value={settings.RADIO_HAMSTR_SERVER[0]} 
               placeholder="Callsign" 
               maxlength="6"
               on:input={(e) => e.target.value = e.target.value.toUpperCase()}
@@ -196,7 +196,7 @@
             <span class="text-2xl font-bold">-</span>
             <Select 
               class="w-24"
-              bind:value={settings.RADIO_SERVER_CALLSIGN[1]}
+              bind:value={settings.RADIO_HAMSTR_SERVER[1]}
             >
               {#each Array(16).fill().map((_, i) => i) as ssid}
                 <option value={ssid}>{ssid}</option>

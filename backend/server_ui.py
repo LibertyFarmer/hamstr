@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QGridLayout, QPushButton, QLabel, 
                                QTextEdit, QGroupBox, QFrame, QSplitter, QDialog,
                                QFormLayout, QLineEdit, QSpinBox, QPlainTextEdit,
-                               QCheckBox, QStatusBar, QMenuBar, QMessageBox)
+                               QCheckBox, QStatusBar, QMenuBar, QMessageBox, QComboBox)
+
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QAction
 
@@ -55,35 +56,79 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("HAMSTR Server Settings")
         self.setModal(True)
-        self.setFixedSize(450, 350)
+        self.setFixedSize(500, 400)
+        self.setStyleSheet("QLabel { font-weight: bold; }")
         
         layout = QFormLayout()
+
+        # Server Callsign and SSID (side by side like Svelte)
+        # Server Callsign and SSID (side by side like Svelte)
+        callsign_layout = QHBoxLayout()
+        
+        self.callsign_input = QLineEdit()
+        self.callsign_input.setMaxLength(6)  # Max 6 characters
+        self.callsign_input.setPlaceholderText("KK7AHK")
+        self.callsign_input.setFixedWidth(80)
+        
+        # Dash separator
+        dash_label = QLabel("-")
+        dash_label.setStyleSheet("font-weight: bold; color: #6b7280;")
+        dash_label.setFixedWidth(15)
+        dash_label.setAlignment(Qt.AlignCenter)
+        
+        self.ssid_combo = QComboBox()
+        self.ssid_combo.setFixedWidth(50)
+        # Populate SSID dropdown with 0-15
+        for i in range(16):
+            self.ssid_combo.addItem(str(i))
+        
+        callsign_layout.addWidget(self.callsign_input)
+        callsign_layout.addWidget(dash_label)
+        callsign_layout.addWidget(self.ssid_combo)
+        callsign_layout.addStretch()  # Push everything to the left
+        
+        layout.addRow("Server Callsign:", callsign_layout)
+        
+        # TNC Host
+        self.host_input = QLineEdit()
+        try:
+            host = config.server_config.get('TNC', 'SERVER_HOST', fallback='localhost')
+            self.host_input.setText(host)
+        except:
+            self.host_input.setText('localhost')
+        layout.addRow("TNC Host:", self.host_input)
         
         # TNC Port
         self.port_input = QSpinBox()
         self.port_input.setRange(1, 65535)
-        self.port_input.setValue(config.SERVER_PORT)
+        try:
+            # Try to get current server port from config
+            self.port_input.setValue(config.server_config.getint('TNC', 'SERVER_PORT', fallback=8002))
+        except:
+            self.port_input.setValue(8002)
         layout.addRow("TNC Port:", self.port_input)
-        
-        # Server Callsign
-        self.callsign_input = QLineEdit()
-        callsign_str = f"{config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}"
-        self.callsign_input.setText(callsign_str)
-        layout.addRow("Server Callsign:", self.callsign_input)
         
         # NOSTR Relays
         self.relays_input = QPlainTextEdit()
         self.relays_input.setMaximumHeight(100)
-        relay_str = ', '.join(config.NOSTR_RELAYS)
-        self.relays_input.setPlainText(relay_str)
+        try:
+            relays = config.server_config.get('NOSTR', 'RELAYS', fallback='wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol')
+            self.relays_input.setPlainText(relays)
+        except:
+            self.relays_input.setPlainText('wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol')
         layout.addRow("NOSTR Relays:", self.relays_input)
+        
+        # Load current callsign values AFTER creating the widgets
+        self.load_callsign_values()
+        
+        # Add input validation for callsign
+        self.callsign_input.textChanged.connect(self.validate_callsign)
         
         # Buttons
         button_layout = QHBoxLayout()
         self.save_btn = QPushButton("Save")
         self.cancel_btn = QPushButton("Cancel")
         
-        # Simple button styling without transform
         self.save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #0ea5e9;
@@ -117,7 +162,7 @@ class SettingsDialog(QDialog):
             }
         """)
         
-        self.save_btn.clicked.connect(self.accept)
+        self.save_btn.clicked.connect(self.save_settings)
         self.cancel_btn.clicked.connect(self.reject)
         
         button_layout.addWidget(self.save_btn)
@@ -125,6 +170,61 @@ class SettingsDialog(QDialog):
         
         layout.addRow(button_layout)
         self.setLayout(layout)
+
+    def load_callsign_values(self):
+        """Load current callsign and SSID from config"""
+        try:
+            # Get current server callsign from config
+            callsign_str = config.server_config.get('RADIO', 'SERVER_CALLSIGN', fallback='(CALLSIGN, 7)')
+            # Use your existing parse_tuple function
+            callsign, ssid = config.parse_tuple(callsign_str)
+            
+            self.callsign_input.setText(callsign)
+            self.ssid_combo.setCurrentText(str(ssid))
+        except Exception as e:
+            # Fallback values
+            self.callsign_input.setText('CALLSIGN')
+            self.ssid_combo.setCurrentText('7')
+
+    def validate_callsign(self, text):
+        """Validate callsign input - only letters and numbers"""
+        # Convert to uppercase and filter only alphanumeric
+        cleaned = ''.join(c.upper() for c in text if c.isalnum())
+        if cleaned != text.upper():
+            self.callsign_input.setText(cleaned)
+
+    def save_settings(self):
+        """Save settings using config.update_config"""
+        try:
+            # Get callsign and SSID values
+            callsign = self.callsign_input.text().strip().upper()
+            ssid = int(self.ssid_combo.currentText())
+            
+            # Validate callsign
+            if not callsign or len(callsign) < 3:
+                QMessageBox.warning(self, "Invalid Callsign", "Callsign must be at least 3 characters.")
+                return
+            
+            # Format as tuple string like your existing system expects
+            callsign_tuple = f"({callsign}, {ssid})"
+            
+            # Save each setting using your existing function
+            config.update_config('RADIO', 'SERVER_CALLSIGN', callsign_tuple)
+            config.update_config('TNC', 'SERVER_HOST', self.host_input.text().strip()) 
+            config.update_config('TNC', 'SERVER_PORT', str(self.port_input.value()))
+            config.update_config('NOSTR', 'RELAYS', self.relays_input.toPlainText().strip())
+            
+            # Reload config
+            import importlib
+            importlib.reload(config)
+            
+            QMessageBox.information(self, "Success", "Settings saved successfully!")
+            logging.info("Server settings updated via GUI")
+            self.accept()
+            
+        except Exception as e:
+            logging.error(f"Error saving settings: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to save: {e}")
 
 class ServerThread(QThread):
     def __init__(self, signals):

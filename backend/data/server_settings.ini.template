@@ -1,8 +1,9 @@
 [RADIO]
-SERVER_CALLSIGN = (CALLSIGN, SSID)
+server_callsign = (CALLSIGN, SSID)
 
 [TNC]
-SEVER_POT = 8002
+server_host = localhost
+server_port = 8002
 
 [NOSTR]
-RELAYS = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol
+relays = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol
