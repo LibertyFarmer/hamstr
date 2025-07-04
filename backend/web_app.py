@@ -592,8 +592,9 @@ def settings():
             for key, value in data.items():
                 if key in setting_sections:
                     section, option = setting_sections[key]
-                    if option.lower().endswith('_callsign'):
-                        # Handle callsign objects
+                    # Handle callsign objects - client_callsign AND hamstr_server
+                    if (option.lower().endswith('_callsign') or 
+                        option.lower() == 'hamstr_server'):
                         callsign_value = f"({value['callsign']}, {value['ssid']})"
                         config.update_config(section, option, callsign_value)
                     else:
@@ -609,8 +610,9 @@ def settings():
                 key = f"{section.upper()}_{option.upper()}"
                 value = config.config.get(section, option)
 
-                if option.lower().endswith('_callsign'):
-                    # Parse callsign tuples
+                # Handle callsign parsing - client_callsign AND hamstr_server
+                if (option.lower().endswith('_callsign') or 
+                    option.lower() == 'hamstr_server'):
                     callsign, ssid = config.parse_tuple(value)
                     value = [callsign, ssid]
                 elif value.isdigit():

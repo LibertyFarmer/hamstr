@@ -1,11 +1,10 @@
 [RADIO]
-client_callsign = (CALLSIGN, SSID)
-hamstr_server = (SERVER, 0)
+client_callsign = (YOUR_CLIENT_CALLSIGN, 0)
+hamstr_server = (SERVER_CALLSIGN, 0)
 
 [TNC]
-
 client_host = localhost
 client_port = 8001
 
 [NOSTR]
-default_note_request_count = 1
+default_note_request_count = 2

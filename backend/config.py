@@ -10,10 +10,10 @@ config = configparser.ConfigParser()
 config.read([config_path, client_callsign_path, server_callsign_path])
 
 server_config = configparser.ConfigParser()
-server_config.read(server_callsign_path)
+server_config.read([config_path, server_callsign_path])
 
 client_config = configparser.ConfigParser()
-client_config.read(client_callsign_path)
+client_config.read([config_path, client_callsign_path])
 
 def update_config(section, option, value):
     """Update the settings in the appropriate INI file."""
@@ -54,7 +54,7 @@ def update_config(section, option, value):
             if not config_to_update.has_section('TNC'):
                 config_to_update.add_section('TNC')
             
-            # Always convert to lowercase for storage (as per your preference)
+            # Always convert to lowercase for storage
             if option == 'client_host' or option == 'CLIENT_HOST':
                 lower_option = 'client_host'
             elif option == 'client_port' or option == 'CLIENT_PORT':
@@ -74,7 +74,6 @@ def update_config(section, option, value):
             config_to_update.set(section, option, str(value))
             with open(server_callsign_path, 'w') as f:
                 config_to_update.write(f)
-        # No else clause - no other TNC settings should go to main settings
     elif section == 'NOSTR':
         if option == 'RELAYS':
             # Handle NOSTR RELAYS - route to server_settings.ini
@@ -104,7 +103,7 @@ def update_config(section, option, value):
             with open(config_path, 'w') as f:
                 main_config.write(f)
     else:  # For main settings.ini only
-        # Only read and update the main settings file, not the combined config
+        # Only read and update the main settings file
         main_config = configparser.ConfigParser()
         main_config.read(config_path)
         if not main_config.has_section(section):
@@ -125,16 +124,21 @@ def parse_tuple(input):
         ssid = 0  # Default to 0 if SSID is not a valid integer
     return callsign, ssid
 
-# Add new settings for relays list - server only pull in future!
 def get_relay_list() -> List[str]:
-    """Get list of relays from config."""
-    relay_string = server_config.get('NOSTR', 'RELAYS')
-    return [relay.strip() for relay in relay_string.split(',')]
-
-#Import from settings here - updated to use the new structure:
+    """Get list of relays from server config."""
+    try:
+        relay_string = server_config.get('NOSTR', 'RELAYS')
+        return [relay.strip() for relay in relay_string.split(',')]
+    except:
+        # Fallback to main config if server config doesn't have relays
+        try:
+            relay_string = config.get('NOSTR', 'relays')
+            return [relay.strip() for relay in relay_string.split(',')]
+        except:
+            return []
 
 # Force reload client config to get latest values
-client_config.read(client_callsign_path)
+client_config.read([config_path, client_callsign_path])
 
 # Client settings from client_config
 try:
@@ -163,9 +167,20 @@ except:
     DEFAULT_NOTE_REQUEST_COUNT = config.getint('NOSTR', 'default_note_request_count', fallback=1)
 
 # Server settings from server_config
-SERVER_HOST = server_config.get('TNC','SERVER_HOST')
-SERVER_PORT = server_config.getint('TNC', 'SERVER_PORT')
-S_CALLSIGN = parse_tuple(server_config.get('RADIO','SERVER_CALLSIGN'))
+try:
+    SERVER_HOST = server_config.get('TNC','SERVER_HOST')
+except:
+    SERVER_HOST = config.get('TNC','SERVER_HOST', fallback='localhost')
+
+try:
+    SERVER_PORT = server_config.getint('TNC', 'SERVER_PORT')
+except:
+    SERVER_PORT = config.getint('TNC', 'SERVER_PORT', fallback=8002)
+
+try:
+    S_CALLSIGN = parse_tuple(server_config.get('RADIO','SERVER_CALLSIGN'))
+except:
+    S_CALLSIGN = parse_tuple(config.get('RADIO','SERVER_CALLSIGN', fallback='(SERVER, 0)'))
 
 # Shared settings from main config
 RETRY_COUNT = config.getint('GENERAL','send_retries')
