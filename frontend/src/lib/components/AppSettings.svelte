@@ -17,7 +17,7 @@
     GENERAL_BAUD_RATE: '',
     GENERAL_SEND_RETRIES: '',
     RADIO_CLIENT_CALLSIGN: ['', 0],
-    RADIO_HAMSTR_SERVER: ['', 0],  // Fixed: Use HAMSTR_SERVER consistently
+    RADIO_HAMSTR_SERVER: ['', 0],
     NOSTR_DEFAULT_NOTE_REQUEST_COUNT: ''
   };
 
@@ -46,7 +46,7 @@
       settings = {
         ...data,
         RADIO_CLIENT_CALLSIGN: parseCallsign(data.RADIO_CLIENT_CALLSIGN),
-        RADIO_HAMSTR_SERVER: parseCallsign(data.RADIO_HAMSTR_SERVER),  // Fixed: Use HAMSTR_SERVER consistently
+        RADIO_HAMSTR_SERVER: parseCallsign(data.RADIO_HAMSTR_SERVER),
         GENERAL_BAUD_RATE: data.GENERAL_BAUD_RATE.toString()
       };
 
@@ -68,7 +68,7 @@
                 callsign: settings.RADIO_CLIENT_CALLSIGN[0],
                 ssid: parseInt(settings.RADIO_CLIENT_CALLSIGN[1])
             },
-            RADIO_HAMSTR_SERVER: {  // Fixed: Use HAMSTR_SERVER consistently
+            RADIO_HAMSTR_SERVER: {
                 callsign: settings.RADIO_HAMSTR_SERVER[0],
                 ssid: parseInt(settings.RADIO_HAMSTR_SERVER[1])
             },
@@ -90,6 +90,12 @@
                 success: true, 
                 message: 'Settings saved successfully!' 
             });
+            // Add the settingsUpdated event dispatch
+            window.dispatchEvent(new CustomEvent('settingsUpdated'));
+            // Close the drawer after successful save
+            setTimeout(() => {
+                dispatch('closeDrawer');
+            }, 300);
         } else {
             const error = await response.json();
             console.error('Error saving settings:', error);
@@ -125,7 +131,7 @@
       GENERAL_BAUD_RATE: '1200',
       GENERAL_SEND_RETRIES: '3',
       RADIO_CLIENT_CALLSIGN: ['', 0],
-      RADIO_HAMSTR_SERVER: ['', 0],  // Fixed: Use HAMSTR_SERVER consistently
+      RADIO_HAMSTR_SERVER: ['', 0],
       NOSTR_DEFAULT_NOTE_REQUEST_COUNT: '2'
     };
   }
@@ -139,15 +145,6 @@
     <p class="text-gray-600 dark:text-gray-400">
       Configure your HAMSTR client settings
     </p>
-  </div>
-
-  <div class="flex justify-center space-x-4 mb-6">
-    <Button color="primary" on:click={saveSettings}>
-      Save Settings
-    </Button>
-    <Button color="alternative" on:click={resetToDefaults}>
-      Reset to Defaults
-    </Button>
   </div>
 
   <div class="grid gap-6">
@@ -301,5 +298,15 @@
         </div>
       </div>
     </Card>
+  </div>
+
+  <!-- ONLY ONE SET OF BUTTONS - AT THE BOTTOM -->
+  <div class="flex justify-center space-x-4 mt-8">
+    <Button color="primary" on:click={saveSettings}>
+      Save Settings
+    </Button>
+    <Button color="alternative" on:click={resetToDefaults}>
+      Reset to Defaults
+    </Button>
   </div>
 </div>
