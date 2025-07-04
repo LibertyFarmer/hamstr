@@ -5,6 +5,7 @@ backend/data/server_settings.ini
 **/dist/
 build/
 .svelte-kit/
+**/__pycache__
 frontend/.svelte-kit/ambient.d.ts
 frontend/.svelte-kit/non-ambient.d.ts
 frontend/.svelte-kit/tsconfig.json
