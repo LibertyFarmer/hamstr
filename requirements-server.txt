@@ -1,5 +1,4 @@
 nostr_sdk==0.38.0
 cryptography==41.0.7
 brotli==1.1.0
-flask_socketio==5.5.1
-flask_cors==5.0.0
+pyside6

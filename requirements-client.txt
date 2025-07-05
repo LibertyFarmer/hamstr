@@ -1,0 +1,2 @@
+flask_socketio==5.5.1
+flask_cors==5.0.0
