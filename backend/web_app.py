@@ -589,19 +589,29 @@ def settings():
     try:
         if request.method == 'POST':
             data = request.json
+            
             for key, value in data.items():
                 if key in setting_sections:
                     section, option = setting_sections[key]
-                    if option.lower().endswith('_callsign'):
-                        # Handle callsign objects
-                        callsign_value = f"({value['callsign']}, {value['ssid']})"
-                        config.update_config(section, option, callsign_value)
+                    
+                    # Handle callsign objects - use existing tuple format like server_ui.py
+                    if (option.lower().endswith('_callsign') or 
+                        option.lower() == 'hamstr_server'):
+                        # Convert frontend format to config tuple format (same as server_ui.py)
+                        if isinstance(value, dict):
+                            callsign_tuple = f"({value['callsign']}, {value['ssid']})"
+                        elif isinstance(value, list) and len(value) == 2:
+                            callsign_tuple = f"({value[0]}, {value[1]})"
+                        else:
+                            continue
+                        config.update_config(section, option, callsign_tuple)
                     else:
                         config.update_config(section, option, str(value))
 
             reload_config()
             return jsonify({"message": "Settings updated and applied successfully!"})
 
+        # GET method
         reload_config()
         settings_dict = {}
         for section in config.config.sections():
@@ -609,8 +619,9 @@ def settings():
                 key = f"{section.upper()}_{option.upper()}"
                 value = config.config.get(section, option)
 
-                if option.lower().endswith('_callsign'):
-                    # Parse callsign tuples
+                # Handle callsign parsing - both _callsign AND hamstr_server  
+                if (option.lower().endswith('_callsign') or 
+                    option.lower() == 'hamstr_server'):
                     callsign, ssid = config.parse_tuple(value)
                     value = [callsign, ssid]
                 elif value.isdigit():
@@ -625,6 +636,8 @@ def settings():
 
     except Exception as e:
         print(f"Error handling settings request: {e}")
+        import traceback
+        traceback.print_exc()  # Print full traceback
         return jsonify({"error": str(e)}), 500
     
 @app.route('/api/nsec', methods=['GET', 'POST', 'DELETE'])
