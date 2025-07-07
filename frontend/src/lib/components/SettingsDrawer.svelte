@@ -8,6 +8,7 @@
   import About from '$lib/components/About.svelte';
   import logo from '$lib/assets/nostr_logo_blk.png';
   import hamsterSmall from '$lib/assets/hamster_small.webp';
+  import NWCSetup from '$lib/components/NWCSetup.svelte';
 
   const dispatch = createEventDispatcher();
   export let hidden = true;
@@ -33,6 +34,17 @@
     hidden = true;
     currentView = 'menu'; // Also reset here just to be thorough
   }
+
+  function handleNWCSaved(event) {
+  const { success, message } = event.detail;
+  dispatch('settingsSaved', { success, message });
+  if (success) {
+    // Optionally close drawer on successful setup
+    setTimeout(() => {
+      currentView = 'menu';
+    }, 1000);
+  }
+}
 
   function handleSettingsSaved(event) {
     dispatch('settingsSaved', event.detail);
@@ -68,6 +80,8 @@
             App Settings
           {:else if currentView === 'nostr'}
             NOSTR Login
+          {:else if currentView === 'nwc'}
+            ⚡ NWC Zap Setup
           {:else if currentView === 'about'}
             About HAMSTR
           {/if}
@@ -91,6 +105,7 @@
             <ul class="space-y-2">
               <li><button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded" on:click={() => navigateTo('app')}>App Settings</button></li>
               <li><button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded" on:click={() => navigateTo('nostr')}>NOSTR Login</button></li>
+              <li><button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded" on:click={() => navigateTo('nwc')}>⚡ NWC Zap Setup</button></li>
               <li><button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded pb-6" on:click={() => navigateTo('about')}>About Hamstr</button></li>
               <li><hr class="my-4"></li>
               <li class="flex justify-center space-x-4">
@@ -105,6 +120,11 @@
           </div>
         {:else if currentView === 'nostr'}
           <NostrSetup />
+        {:else if currentView === 'nwc'}
+          <NWCSetup 
+            on:nwcSaved={handleNWCSaved}
+            on:closeDrawer={() => hidden = true}
+          />
         {:else if currentView === 'app'}
           <AppSettings 
             on:settingsSaved={handleSettingsSaved}

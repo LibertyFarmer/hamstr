@@ -76,6 +76,36 @@
       }
     }));
   }
+
+  function handleZap() {
+  // Check if note has Lightning address
+  if (!note.lud16) {
+    // Show toast for no Lightning address
+    window.dispatchEvent(new CustomEvent('showToast', {
+      detail: {
+        message: 'Cannot Zap, no Lightning address',
+        type: 'error'
+      }
+    }));
+    return;
+  }
+
+  console.log('Setting up zap for note:', note);
+  const zapContext = {
+    lud16: note.lud16,
+    authorName: note.display_name || shortenNpub(note.pubkey),
+    authorPubkey: note.pubkey,
+    content: note.content,
+    noteId: note.id
+  };
+  console.log('Zap context:', zapContext);
+  
+  window.dispatchEvent(new CustomEvent('openZapModal', { 
+    detail: { 
+      context: zapContext
+    }
+  }));
+}
 </script>
 
 <div class="flex space-x-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow hover:shadow-md transition-shadow">
@@ -99,7 +129,13 @@
           {note.display_name || shortenNpub(note.pubkey)}
         </span>
         {#if hasLightning}
-          <span class="text-yellow-500" title={note.lud16}>⚡</span>
+          <button 
+            on:click={handleZap}
+            class="text-yellow-500 hover:text-yellow-400 transition-colors"
+            title="⚡ Zap {note.display_name || shortenNpub(note.pubkey)} - {note.lud16}"
+          >
+            ⚡
+          </button>
         {/if}
       </div>
       <span class="text-gray-500 dark:text-gray-400 text-sm flex items-center whitespace-nowrap">

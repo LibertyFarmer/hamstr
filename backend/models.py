@@ -18,6 +18,8 @@ class MessageType(Enum):
     RETRY = 13
     PKT_MISSING = 14
     NOTE = 15
+    ZAP_REQUEST = 16
+    ZAP_RESPONSE = 17
 
 # New SessionState enum
 class SessionState(Enum):
@@ -48,7 +50,7 @@ class ModemState(Enum):
     DONE_ACK = 9
     DISCONNECTED = 10
 
-    # Add to models.py
+#Note types to save bandwidth
 
 class NoteType(Enum):
     STANDARD = 1  # Regular note
@@ -56,7 +58,7 @@ class NoteType(Enum):
     QUOTE = 3     # Quote reply
     REPOST = 4    # Boost/repost
 
-
+#Request types to save bandwidth
 class NoteRequestType(Enum):
     FOLLOWING = 1    # Get notes from following list
     SPECIFIC_USER = 2  # Current functionality - specific npub
@@ -65,6 +67,39 @@ class NoteRequestType(Enum):
     SEARCH_HASHTAG = 5  # Search by hashtag
     SEARCH_USER = 6    # Search by npub/name
     TEST_ERROR = 99    # For testing error responses
+
+
+# NWC Responses to save bandwidth
+class NWCResponseCode(Enum):
+    SUCCESS = 0
+    INSUFFICIENT_BALANCE = 1  
+    RECIPIENT_NOT_FOUND = 2
+    INVOICE_EXPIRED = 3
+    PAYMENT_TIMEOUT = 4
+    WALLET_OFFLINE = 5
+    AMOUNT_TOO_LOW = 6
+    AMOUNT_TOO_HIGH = 7
+    RATE_LIMITED = 8
+    INVALID_RECIPIENT = 9
+    
+    # Only use double digits if we need more codes later
+    NETWORK_ERROR = 10
+    UNKNOWN_ERROR = 99
+
+NWC_ERROR_MESSAGES = {
+    NWCResponseCode.SUCCESS: {"text": "⚡ Zap sent successfully!", "type": "success"},
+    NWCResponseCode.INSUFFICIENT_BALANCE: {"text": "❌ Insufficient wallet balance", "type": "error"},
+    NWCResponseCode.RECIPIENT_NOT_FOUND: {"text": "❌ Recipient Lightning address not found", "type": "error"},
+    NWCResponseCode.INVOICE_EXPIRED: {"text": "❌ Lightning invoice expired", "type": "error"},
+    NWCResponseCode.PAYMENT_TIMEOUT: {"text": "❌ Payment timed out", "type": "error"},
+    NWCResponseCode.WALLET_OFFLINE: {"text": "❌ Wallet is offline", "type": "error"},
+    NWCResponseCode.AMOUNT_TOO_LOW: {"text": "❌ Amount too low (minimum required)", "type": "error"},
+    NWCResponseCode.AMOUNT_TOO_HIGH: {"text": "❌ Amount exceeds maximum limit", "type": "error"},
+    NWCResponseCode.RATE_LIMITED: {"text": "❌ Too many requests, try again later", "type": "error"},
+    NWCResponseCode.INVALID_RECIPIENT: {"text": "❌ Invalid Lightning address", "type": "error"},
+    NWCResponseCode.NETWORK_ERROR: {"text": "❌ Network connection error", "type": "error"},
+    NWCResponseCode.UNKNOWN_ERROR: {"text": "❌ Zap failed (unknown error)", "type": "error"}
+}
 
 class Session:
     def __init__(self, session_id, remote_callsign):

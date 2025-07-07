@@ -17,7 +17,8 @@
   import { quintOut } from 'svelte/easing';
   import { io } from 'socket.io-client';
   import RequestTypeModal from '$lib/components/RequestTypeModal.svelte';
-
+  import ZapModal from '$lib/components/ZapModal.svelte';
+  
   config.autoAddCss = false;
 
   let currentOperationLogs = writable([]);
@@ -27,6 +28,7 @@
   let toastType = 'success';
   let showWriteNoteModal = false;
   let showRequestTypeModal = false;
+  let showZapModal = false;  // Fixed: moved to top level
   let isSending = false;
   let progressDrawerOpen = false;
   $: progressDrawerHidden = !progressDrawerOpen;
@@ -35,11 +37,11 @@
   $: apiBaseUrl = $baseURL;
   
   function clearOperationLogs() {
-  console.log('Clearing all logs');
-  currentOperationLogs.set([]);
-  // Dispatch a custom event for ProgressDrawer
-  window.dispatchEvent(new CustomEvent('clearProgressLogs'));
-}
+    console.log('Clearing all logs');
+    currentOperationLogs.set([]);
+    // Dispatch a custom event for ProgressDrawer
+    window.dispatchEvent(new CustomEvent('clearProgressLogs'));
+  }
 
   function handleSettingsSaved(event) {
     const { success, message } = event.detail;
@@ -62,24 +64,24 @@
   }
 
   function handleLog(logData) {
-  const data = JSON.parse(logData);
-  logStore.addLog({
-    timestamp: data.timestamp,
-    level: data.level,
-    message: data.message
-  });
-
-  if (data.message.includes('[CLIENT]') || data.message.includes('[PACKET]') || 
-      data.message.includes('[SESSION]') || data.message.includes('[CONTROL]')) {
-    currentOperationLogs.update(logs => {
-      return [...logs, {
-        timestamp: data.timestamp,
-        level: data.level,
-        message: data.message
-      }];
+    const data = JSON.parse(logData);
+    logStore.addLog({
+      timestamp: data.timestamp,
+      level: data.level,
+      message: data.message
     });
+
+    if (data.message.includes('[CLIENT]') || data.message.includes('[PACKET]') || 
+        data.message.includes('[SESSION]') || data.message.includes('[CONTROL]')) {
+      currentOperationLogs.update(logs => {
+        return [...logs, {
+          timestamp: data.timestamp,
+          level: data.level,
+          message: data.message
+        }];
+      });
+    }
   }
-}
 
   onMount(() => {
     const socket = io($baseURL, {
@@ -102,80 +104,137 @@
     });
 
     window.addEventListener('showToast', handleToast);
-    // Add clearLogs event listener
     window.addEventListener('clearLogs', clearOperationLogs);
+    // Fixed: Added event listener for zap modal
+    window.addEventListener('openZapModal', (event) => {
+      console.log('Layout received openZapModal event:', event.detail);
+      showZapModal = true;
+    });
 
     return () => {
       socket.disconnect();
       window.removeEventListener('showToast', handleToast);
       window.removeEventListener('clearLogs', clearOperationLogs);
+      window.removeEventListener('openZapModal');  // Fixed: Added cleanup
     };
   });
 
   async function handleSubmitNote(noteData) {
-  try {
-    console.log('Sending note data:', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(noteData)
-    });
+    try {
+      console.log('Sending note data:', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(noteData)
+      });
 
-    currentOperationLogs.set([]);
-    progressDrawerOpen = true;
-    showWriteNoteModal = false;
-    isSending = true;
-    
-    const response = await fetch(`${$baseURL}/api/send_note`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(noteData)
-    });
-
-    const result = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(result.message || 'Failed to send note');
-    }
-
-    if (result.success) {
-      const notesResponse = await fetch(`${$baseURL}/api/notes`);
-      if (!notesResponse.ok) throw new Error('Failed to fetch updated notes');
-      const notesData = await notesResponse.json();
+      currentOperationLogs.set([]);
+      progressDrawerOpen = true;
+      showWriteNoteModal = false;
+      // Fixed: removed incorrect showZapModal declaration from here
+      isSending = true;
       
-      window.dispatchEvent(new CustomEvent('notesUpdated', { 
-        detail: notesData 
-      }));
+      const response = await fetch(`${$baseURL}/api/send_note`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(noteData)
+      });
 
-      await new Promise(resolve => setTimeout(resolve, 300));
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to send note');
+      }
+
+      if (result.success) {
+        const notesResponse = await fetch(`${$baseURL}/api/notes`);
+        if (!notesResponse.ok) throw new Error('Failed to fetch updated notes');
+        const notesData = await notesResponse.json();
+        
+        window.dispatchEvent(new CustomEvent('notesUpdated', { 
+          detail: notesData 
+        }));
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+        currentOperationLogs.set([]);
+        progressDrawerOpen = false;
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+        toastMessage = 'Note successfully sent';
+        toastType = 'success';
+      } else {
+        throw new Error(result.message || 'Failed to send note');
+      }
+
+    } catch (err) {
+      console.error("Error sending note:", err);
       currentOperationLogs.set([]);
       progressDrawerOpen = false;
-      
-      await new Promise(resolve => setTimeout(resolve, 300));
-      toastMessage = 'Note successfully sent';
-      toastType = 'success';
-    } else {
-      throw new Error(result.message || 'Failed to send note');
+      toastMessage = `Error: ${err.message}`;
+      toastType = 'error';
+
+    } finally {
+      isSending = false;
+      showToast = true;
+      currentOperationLogs.set([]);
+      setTimeout(() => {
+        showToast = false;
+      }, 3000);
     }
-
-  } catch (err) {
-    console.error("Error sending note:", err);
-    currentOperationLogs.set([]);
-    progressDrawerOpen = false;
-    toastMessage = `Error: ${err.message}`;
-    toastType = 'error';
-
-  } finally {
-    isSending = false;
-    showToast = true;
-    currentOperationLogs.set([]); // Clear logs
-    setTimeout(() => {
-      showToast = false;
-    }, 3000);
   }
-}
 
+  async function handleSubmitZap(zapData) {
+    try {
+      console.log('Sending zap data:', zapData);
+
+      currentOperationLogs.set([]);
+      progressDrawerOpen = true;
+      showZapModal = false;
+      isSending = true;
+      
+      const response = await fetch(`${$baseURL}/api/send_zap`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(zapData)
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to send zap');
+      }
+
+      if (result.success) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        currentOperationLogs.set([]);
+        progressDrawerOpen = false;
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+        toastMessage = '⚡ Zap sent successfully!';
+        toastType = 'success';
+      } else {
+        throw new Error(result.message || 'Failed to send zap');
+      }
+
+    } catch (err) {
+      console.error("Error sending zap:", err);
+      currentOperationLogs.set([]);
+      progressDrawerOpen = false;
+      toastMessage = `Error: ${err.message}`;
+      toastType = 'error';
+
+    } finally {
+      isSending = false;
+      showToast = true;
+      currentOperationLogs.set([]);
+      setTimeout(() => {
+        showToast = false;
+      }, 3000);
+    }
+  }
 </script>
 
 {#if showToast}
@@ -200,6 +259,11 @@
   show={showWriteNoteModal}
   onClose={() => showWriteNoteModal = false}
   onSubmit={handleSubmitNote}
+/>
+<ZapModal 
+  show={showZapModal}
+  onClose={() => showZapModal = false}
+  onSubmit={handleSubmitZap}
 />
 <RequestTypeModal 
   show={showRequestTypeModal}

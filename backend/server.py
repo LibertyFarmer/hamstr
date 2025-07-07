@@ -3,12 +3,16 @@ import threading
 import logging
 import signal
 import time
+import requests
+import asyncio
+from urllib.parse import quote
 from core import Core, ModemState, MessageType
 from nostr import search_nostr, run_get_recent_notes, publish_note, search_user_notes
-from models import NoteRequestType, NoteType
+from models import NoteRequestType, NoteType, NWCResponseCode
 from protocol_utils import compress_nostr_data, decompress_nostr_data
 import config
 import os
+
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -91,6 +95,235 @@ class Server:
             self.cleanup()
             logging.info("Server stopped.")
 
+    def parse_zap_packet(self, message):
+
+        try:
+            # Extract payload from packet format (header:payload)
+            if ":" in message and "|" in message:
+                # Split header from content: "0000|0000|16:ZAP:..." -> "ZAP:..."
+                parts = message.split(":", 1)
+                if len(parts) > 1:
+                    payload = parts[1]  # Get everything after first ":"
+                else:
+                    payload = message
+            else:
+                payload = message
+            
+            if not payload.startswith("ZAP:"):
+                raise ValueError("Invalid zap packet format")
+            
+            # Remove "ZAP:" prefix
+            zap_content = payload[4:]  # Remove "ZAP:"
+            
+            # Strategy: Parse from both ends since we know the format
+            # 1. Find relay (starts with wss:// and goes to end)
+            if not ("wss://" in zap_content or "ws://" in zap_content):
+                raise ValueError("NWC relay URL not found")
+            
+            # Find the LAST occurrence of wss:// or ws:// (in case message contains it)
+            wss_pos = zap_content.rfind("wss://")
+            ws_pos = zap_content.rfind("ws://")
+            relay_start = max(wss_pos, ws_pos)
+            
+            if relay_start == -1:
+                raise ValueError("Invalid NWC relay format")
+            
+            # Extract relay and everything before it
+            nwc_relay = zap_content[relay_start:]
+            before_relay = zap_content[:relay_start-1]  # -1 to remove the ":" before relay
+            
+            # 2. Parse recipient (first part before first ":")
+            if ":" not in before_relay:
+                raise ValueError("Missing amount field")
+            
+            first_colon = before_relay.find(":")
+            recipient_lud16 = before_relay[:first_colon]
+            remaining = before_relay[first_colon+1:]
+            
+            # 3. Parse amount (next part before next ":")
+            if ":" not in remaining:
+                # No message, just amount
+                amount_sats = int(remaining)
+                zap_message = ""
+            else:
+                second_colon = remaining.find(":")
+                amount_sats = int(remaining[:second_colon])
+                zap_message = remaining[second_colon+1:]  # Everything else is the message
+            
+            return recipient_lud16, amount_sats, zap_message, nwc_relay
+            
+        except Exception as e:
+            logging.error(f"Error parsing zap packet: {e}")
+            logging.error(f"Packet content: {message}")
+            return None, None, None, None
+
+    # Process zap request - currently mock implementation
+
+    def process_zap_request(self, recipient_lud16, amount_sats, zap_message, nwc_relay):
+
+        try:
+            logging.info(f"[ZAP] Processing real zap request:")
+            logging.info(f"[ZAP]   Recipient: {recipient_lud16}")
+            logging.info(f"[ZAP]   Amount: {amount_sats} sats")
+            logging.info(f"[ZAP]   Message: {zap_message}")
+            logging.info(f"[ZAP]   NWC Relay: {nwc_relay}")
+            
+            # Basic validation only - no artificial limits
+            if not recipient_lud16 or "@" not in recipient_lud16:
+                logging.error(f"[ZAP] Invalid recipient Lightning address: {recipient_lud16}")
+                return NWCResponseCode.INVALID_RECIPIENT
+            
+            if amount_sats <= 0:
+                logging.error(f"[ZAP] Invalid amount: {amount_sats}")
+                return NWCResponseCode.AMOUNT_TOO_LOW
+            
+            if not nwc_relay or not nwc_relay.startswith("wss://"):
+                logging.error(f"[ZAP] Invalid NWC relay: {nwc_relay}")
+                return NWCResponseCode.NETWORK_ERROR
+            
+            # Step 1: Resolve Lightning address to LNURL endpoint
+            logging.info(f"[ZAP] Step 1: Resolving Lightning address...")
+            lnurl_data = asyncio.run(self.resolve_lightning_address(recipient_lud16))
+            
+            if lnurl_data is None:
+                logging.error(f"[ZAP] Failed to resolve Lightning address")
+                return NWCResponseCode.RECIPIENT_NOT_FOUND
+            
+            # Step 2: Request Lightning invoice
+            logging.info(f"[ZAP] Step 2: Requesting Lightning invoice...")
+            invoice, error = asyncio.run(self.request_lightning_invoice(lnurl_data, amount_sats, zap_message))
+            
+            if invoice is None:
+                logging.error(f"[ZAP] Failed to get Lightning invoice: {error}")
+                if error == "AMOUNT_TOO_LOW":
+                    return NWCResponseCode.AMOUNT_TOO_LOW
+                elif error == "AMOUNT_TOO_HIGH":
+                    return NWCResponseCode.AMOUNT_TOO_HIGH
+                else:
+                    return NWCResponseCode.NETWORK_ERROR
+            
+            # Step 3: TODO - Send NWC payment command (next implementation)
+            logging.info(f"[ZAP] Step 3: TODO - Send NWC payment command")
+            logging.info(f"[ZAP] Got invoice: {invoice}")
+            logging.info(f"[ZAP] Full Lightning invoice for manual testing: {invoice}")
+         
+            
+            # For now, return success since we got the invoice
+            logging.info(f"[ZAP] LNURL-pay successful: {amount_sats} sats invoice for {recipient_lud16}")
+            return NWCResponseCode.SUCCESS
+            
+        except Exception as e:
+            logging.error(f"[ZAP] Error processing zap request: {e}")
+            return NWCResponseCode.UNKNOWN_ERROR
+        
+    async def resolve_lightning_address(self, lightning_address):
+     
+        #Convert lightning address (user@domain.com) to LNURL endpoint
+        try:
+            if "@" not in lightning_address:
+                raise ValueError("Invalid Lightning address format")
+            
+            user, domain = lightning_address.split("@", 1)
+            
+            # LNURL-pay endpoint format: https://domain/.well-known/lnurlp/user
+            lnurl_url = f"https://{domain}/.well-known/lnurlp/{user}"
+            
+            logging.info(f"[LNURL] Resolving {lightning_address} -> {lnurl_url}")
+            
+            # Make HTTP GET request to LNURL endpoint
+            response = requests.get(lnurl_url, timeout=10)
+            response.raise_for_status()
+            
+            lnurl_data = response.json()
+            
+            # Validate LNURL response
+            if "callback" not in lnurl_data:
+                raise ValueError("Invalid LNURL response - missing callback")
+            
+            if "minSendable" not in lnurl_data or "maxSendable" not in lnurl_data:
+                raise ValueError("Invalid LNURL response - missing amount limits")
+            
+            logging.info(f"[LNURL] Successfully resolved {lightning_address}")
+            logging.info(f"[LNURL] Callback: {lnurl_data['callback']}")
+            logging.info(f"[LNURL] Min: {lnurl_data['minSendable']} msat")
+            logging.info(f"[LNURL] Max: {lnurl_data['maxSendable']} msat")
+            
+            return lnurl_data
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[LNURL] Network error resolving {lightning_address}: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"[LNURL] Error resolving {lightning_address}: {e}")
+            return None
+
+    async def request_lightning_invoice(self, lnurl_data, amount_sats, zap_message=""):
+       
+       #Request Lightning invoice from LNURL callback
+        try:
+            callback_url = lnurl_data["callback"]
+            amount_msats = amount_sats * 1000  # Convert sats to millisats
+            
+            # Check amount limits
+            min_sendable = lnurl_data.get("minSendable", 0)
+            max_sendable = lnurl_data.get("maxSendable", float('inf'))
+            
+            if amount_msats < min_sendable:
+                logging.error(f"[LNURL] Amount {amount_sats} sats below minimum {min_sendable/1000} sats")
+                return None, "AMOUNT_TOO_LOW"
+            
+            if amount_msats > max_sendable:
+                logging.error(f"[LNURL] Amount {amount_sats} sats above maximum {max_sendable/1000} sats")
+                return None, "AMOUNT_TOO_HIGH"
+            
+            # Build callback URL with parameters
+            params = {
+                "amount": amount_msats
+            }
+            
+            # Add comment if provided and supported
+            if zap_message and lnurl_data.get("commentAllowed", 0) > 0:
+                max_comment_length = lnurl_data["commentAllowed"]
+                if len(zap_message) <= max_comment_length:
+                    params["comment"] = zap_message
+                else:
+                    # Truncate message to fit
+                    params["comment"] = zap_message[:max_comment_length]
+            
+            logging.info(f"[LNURL] Requesting invoice for {amount_sats} sats")
+            logging.info(f"[LNURL] Callback: {callback_url}")
+            
+            # Make request to callback URL
+            response = requests.get(callback_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            invoice_data = response.json()
+            
+            # Check for errors
+            if "status" in invoice_data and invoice_data["status"] == "ERROR":
+                error_reason = invoice_data.get("reason", "Unknown error")
+                logging.error(f"[LNURL] Invoice request failed: {error_reason}")
+                return None, "INVOICE_ERROR"
+            
+            # Validate invoice response
+            if "pr" not in invoice_data:
+                logging.error("[LNURL] Invalid invoice response - missing 'pr' field")
+                return None, "INVALID_INVOICE"
+            
+            lightning_invoice = invoice_data["pr"]
+            
+            logging.info(f"[LNURL] Successfully got invoice: {lightning_invoice[:50]}...")
+            
+            
+            return lightning_invoice, None
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[LNURL] Network error requesting invoice: {e}")
+            return None, "NETWORK_ERROR"
+        except Exception as e:
+            logging.error(f"[LNURL] Error requesting invoice: {e}")
+            return None, "UNKNOWN_ERROR"
+
     def handle_connected_session(self, session):
         logging.info(f"Handling session for {session.remote_callsign}")
         received_packets = {}
@@ -141,6 +374,27 @@ class Server:
                         logging.error("Did not receive READY message from client")
                 else:
                     logging.error("Failed to send READY for DATA_REQUEST")
+            elif msg_type == MessageType.ZAP_REQUEST:
+                logging.info(f"[ZAP] Received ZAP_REQUEST: {message}")
+                
+                # Parse the zap packet
+                recipient, amount, zap_msg, relay = self.parse_zap_packet(message)
+                
+                if recipient is None:
+                    # Parsing failed
+                    response_code = NWCResponseCode.UNKNOWN_ERROR
+                    logging.error(f"[ZAP] Failed to parse zap packet")
+                else:
+                    # Process the zap request
+                    response_code = self.process_zap_request(recipient, amount, zap_msg, relay)
+                
+                # Send response back to client
+                response_message = f"{response_code.value}".encode()
+                
+                if self.core.send_single_packet(session, 0, 0, response_message, MessageType.ZAP_RESPONSE):
+                    logging.info(f"[ZAP] Sent zap response: {response_code.name} ({response_code.value})")
+                else:
+                    logging.error(f"[ZAP] Failed to send zap response")
             elif msg_type == MessageType.DONE:
                 logging.info("Received DONE from client")
                 if is_note:

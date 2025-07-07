@@ -7,15 +7,17 @@ import uuid
 import os
 import logging
 import importlib
-from models import NoteRequestType, NoteType
-from protocol_utils import compress_nostr_data, decompress_nostr_data
+from models import NoteRequestType, NoteType, NWCResponseCode, MessageType
+from protocol_utils import compress_nostr_data, decompress_nostr_data, parse_callsign
 from socketio_logger import init_socketio, get_socketio_logger
 from nostr_sdk import Keys, EventId, EventBuilder, Tag, Kind 
 from nsec_storage import NSECStorage
+from nwc_storage import NWCStorage
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from client import Client
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build')
@@ -24,6 +26,7 @@ app = Flask(__name__, static_folder=FRONTEND_DIR)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 socketio = init_socketio(app)
 nsec_storage = NSECStorage(BASE_DIR)
+nwc_storage = NWCStorage(BASE_DIR)
 
 #initiate radio process lock
 radio_lock = threading.Lock()
@@ -526,6 +529,7 @@ def save_note(note, is_local=False):
         logging.error(f"Failed to save note after {max_retries} attempts")
     conn.close()
 
+# Note Handinlg API
 def process_received_notes(response):
     try:
         data = json.loads(response)
@@ -584,6 +588,8 @@ def reload_config():
     """ Reload the settings by reloading the config module """
     importlib.reload(config)
 
+#Settings Route(s)
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def settings():
     try:
@@ -640,6 +646,8 @@ def settings():
         traceback.print_exc()  # Print full traceback
         return jsonify({"error": str(e)}), 500
     
+#Secure NSEC Handling API
+
 @app.route('/api/nsec', methods=['GET', 'POST', 'DELETE'])
 def manage_nsec():
     if request.method == 'POST':
@@ -670,7 +678,9 @@ def manage_nsec():
             'success': success,
             'message': 'NSEC cleared successfully' if success else 'Failed to clear NSEC'
         })
-    
+
+# Clear Notes function
+
 @app.route('/api/clear_notes', methods=['POST'])
 def clear_notes():
     try:
@@ -690,6 +700,247 @@ def clear_notes():
         return jsonify({
             "success": False,
             "message": f"Error clearing database: {str(e)}"
+        }), 500
+
+#--- Begin Zap and NWC ----
+
+@app.route('/api/nwc', methods=['GET', 'POST', 'DELETE'])
+def manage_nwc():
+    """Manage NWC connection (similar to NSEC management)."""
+    if request.method == 'POST':
+        data = request.get_json()
+        nwc_uri = data.get('nwc_uri')
+        
+        if not nwc_uri:
+            return jsonify({'success': False, 'message': 'NWC URI is required'}), 400
+        
+        # Validate NWC URI format
+        if not nwc_uri.startswith('nostr+walletconnect://'):
+            return jsonify({'success': False, 'message': 'Invalid NWC URI format'}), 400
+            
+        success = nwc_storage.store_nwc_connection(nwc_uri)
+        return jsonify({
+            'success': success,
+            'message': 'NWC connection stored successfully' if success else 'Failed to store NWC connection'
+        })
+        
+    elif request.method == 'GET':
+        has_nwc = nwc_storage.has_nwc_connection()
+        connection_info = None
+        
+        if has_nwc:
+            connection = nwc_storage.get_nwc_connection()
+            if connection:
+                # Return safe info (no secrets)
+                connection_info = {
+                    'relay': connection.get('relay'),
+                    'wallet_pubkey_preview': connection.get('wallet_pubkey', '')[:8] + '...',
+                    'connected': True
+                }
+        
+        return jsonify({
+            'success': True,
+            'has_nwc': has_nwc,
+            'connection_info': connection_info
+        })
+        
+    elif request.method == 'DELETE':
+        success = nwc_storage.clear_nwc_connection()
+        return jsonify({
+            'success': success,
+            'message': 'NWC connection cleared successfully' if success else 'Failed to clear NWC connection'
+        })
+
+@app.route('/api/test_nwc', methods=['POST'])
+def test_nwc_connection():
+    """Test NWC connection while online (for setup phase)."""
+    try:
+        data = request.get_json()
+        nwc_uri = data.get('nwc_uri')
+        
+        if not nwc_uri:
+            return jsonify({'success': False, 'message': 'NWC URI is required'}), 400
+        
+        # Test the connection format and basic validation
+        test_result = nwc_storage.test_nwc_connection(nwc_uri)
+        
+        return jsonify(test_result)
+        
+    except Exception as e:
+        socketio_logger.error(f"[NWC] Error testing connection: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Connection test failed: {str(e)}'
+        }), 500
+
+@app.route('/api/send_zap', methods=['POST'])
+def send_zap():
+    """Send zap request via ham radio (similar to send_note pattern)."""
+    global radio_operation_in_progress
+    
+    if radio_operation_in_progress:
+        socketio_logger.info("[SYSTEM] Cannot send zap - radio operation in progress")
+        return jsonify({
+            "success": False, 
+            "message": "Cannot send zap - radio operation in progress"
+        }), 500
+
+    try:
+        data = request.get_json()
+        socketio_logger.info("[DEBUG] Parsed zap JSON data: %s", data)
+    except Exception as e:
+        socketio_logger.error("[DEBUG] JSON parse error: %s", str(e))
+        return jsonify({
+            "success": False,
+            "message": "Invalid request format"
+        }), 400
+
+    # Extract zap data
+    recipient_lud16 = data.get('recipient_lud16', '')
+    amount_sats = data.get('amount_sats', 0)
+    message = data.get('message', '')
+    
+    # Validate inputs
+    if not recipient_lud16:
+        socketio_logger.error("[CLIENT] No recipient Lightning address provided")
+        return jsonify({
+            "success": False,
+            "message": "Recipient Lightning address is required"
+        }), 400
+    
+    if amount_sats <= 0:
+        socketio_logger.error("[CLIENT] Invalid zap amount")
+        return jsonify({
+            "success": False,
+            "message": "Zap amount must be greater than 0"
+        }), 400
+    
+    # Check for NWC connection
+    if not nwc_storage.has_nwc_connection():
+        socketio_logger.error("[CLIENT] No NWC connection available")
+        return jsonify({
+            "success": False,
+            "message": "No Lightning wallet connected. Please setup NWC connection first."
+        }), 400
+
+    try:
+        # Get NWC relay for packet transmission
+        nwc_relay = nwc_storage.get_nwc_relay_url()
+        if not nwc_relay:
+            socketio_logger.error("[CLIENT] Failed to get NWC relay URL")
+            return jsonify({
+                "success": False,
+                "message": "Invalid NWC connection - missing relay"
+            }), 400
+        
+        # Create zap packet (bandwidth optimized)
+        # Format: ZAP:recipient:amount:message:relay
+        zap_packet = f"ZAP:{recipient_lud16}:{amount_sats}:{message}:{nwc_relay}"
+        
+        socketio_logger.info(f"[CLIENT] Preparing to send zap: {amount_sats} sats to {recipient_lud16}")
+        
+        # Use existing radio infrastructure (similar to send_note)
+        radio_operation_in_progress = True
+        result_container = [None]
+        
+        def radio_operation():
+            nonlocal result_container
+            try:
+                client = Client(BASE_DIR)
+                server_callsign = parse_callsign(config.HAMSTR_SERVER)
+                
+                # Use existing connect and send infrastructure
+                session = client.core.connect(server_callsign)
+                if session:
+                    # Send zap request packet
+                    success = client.core.send_single_packet(
+                        session, 
+                        0, 
+                        0, 
+                        zap_packet.encode(), 
+                        MessageType.ZAP_REQUEST
+                    )
+                    
+                    if success:
+                        # Wait for zap response
+                        source_callsign, message, msg_type = client.core.receive_message(session, timeout=30)
+                        
+                        if msg_type == MessageType.ZAP_RESPONSE:
+                            # Parse response code (format: "17:0" or "17:1" etc.)
+                            if ":" in message:
+                                _, response_code = message.split(":", 1)
+                                result_container[0] = int(response_code)
+                            else:
+                                result_container[0] = 99  # Unknown error
+                        else:
+                            result_container[0] = 10  # Network error
+                    else:
+                        result_container[0] = 10  # Network error
+                        
+                    client.core.connection_manager.initiate_disconnect(session)
+                else:
+                    result_container[0] = 10  # Network error
+                    
+            except Exception as e:
+                socketio_logger.error(f"[SYSTEM] Error in zap radio operation: {e}")
+                result_container[0] = 99  # Unknown error
+            finally:
+                global radio_operation_in_progress
+                radio_operation_in_progress = False
+        
+        # Start radio operation in thread (following your existing pattern)
+        import threading
+        radio_thread = threading.Thread(target=radio_operation)
+        radio_thread.start()
+        radio_thread.join(timeout=45)  # 45 second timeout for zap
+        
+        radio_operation_in_progress = False
+        
+        # Check if operation timed out
+        if radio_thread.is_alive():
+            socketio_logger.error("[CLIENT] Zap operation timed out")
+            return jsonify({
+                "success": False, 
+                "message": "Failed to send zap - operation timed out"
+            }), 500
+
+        # Check result
+        if result_container[0] is None:
+            socketio_logger.error("[CLIENT] Failed to send zap - no response")
+            return jsonify({
+                "success": False,
+                "message": "Failed to send zap - no response from server"
+            }), 500
+
+        # Process result using NWCResponseCode
+        response_code = NWCResponseCode(result_container[0])
+        
+        if response_code == NWCResponseCode.SUCCESS:
+            socketio_logger.info(f"[CLIENT] Zap sent successfully: {amount_sats} sats")
+            return jsonify({
+                "success": True,
+                "message": "Zap sent successfully!"
+            }), 200
+        else:
+            # Get error message from models
+            from models import NWC_ERROR_MESSAGES
+            error_info = NWC_ERROR_MESSAGES.get(response_code, {
+                "text": f"Zap failed (Code: {response_code.value})",
+                "type": "error"
+            })
+            
+            socketio_logger.error(f"[CLIENT] Zap failed: {error_info['text']}")
+            return jsonify({
+                "success": False,
+                "message": error_info['text']
+            }), 400
+
+    except Exception as e:
+        radio_operation_in_progress = False
+        socketio_logger.error(f"[SYSTEM] Error sending zap: {e}")
+        return jsonify({
+            "success": False,
+            "message": f"Error processing zap: {str(e)}"
         }), 500
     
 # Static file routes
