@@ -1,4 +1,6 @@
+
 import os
+import time
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -6,7 +8,16 @@ import base64
 import json
 import logging
 import urllib.parse
+import asyncio
 from socketio_logger import get_socketio_logger
+
+# Import the NWC client
+try:
+    from nwc_client import NWCClient
+except ImportError:
+    # Fallback for development - will implement basic validation only
+    NWCClient = None
+    logging.warning("[NWC] NWC client not available - using basic validation only")
 
 socketio_logger = get_socketio_logger()
 
@@ -112,7 +123,7 @@ class NWCStorage:
             connection_data = self.parse_nwc_uri(nwc_uri)
             
             # Add timestamp
-            connection_data['timestamp'] = str(int(os.path.getctime(self.storage_path))) if os.path.exists(self.storage_path) else '0'
+            connection_data['timestamp'] = str(int(time.time()))
             
             # Encrypt and store
             encrypted_data = self.fernet.encrypt(json.dumps(connection_data).encode())
@@ -163,23 +174,50 @@ class NWCStorage:
 
     def test_nwc_connection(self, nwc_uri):
         """
-        Test NWC connection validity (for online setup phase).
-        This would be expanded to actually test connectivity when implementing NWC client.
+        Test NWC connection validity with actual wallet communication.
+        This performs real NIP-47 connection testing during online setup phase.
         """
         try:
-            # Parse URI to validate format
+            # First validate URI format
             connection_data = self.parse_nwc_uri(nwc_uri)
             
-            # For now, just validate the format
-            # TODO: In full implementation, this would connect to the relay and test auth
-            logging.info(f"NWC URI format validated - Relay: {connection_data['relay']}")
-            socketio_logger.info(f"[NWC] Connection format validated - Relay: {connection_data['relay']}")
+            logging.info(f"[NWC] Testing connection to wallet: {connection_data['wallet_pubkey'][:8]}...")
+            socketio_logger.info(f"[NWC] Testing connection to wallet via {connection_data['relay']}")
             
-            return {
-                'success': True,
-                'relay': connection_data['relay'],
-                'wallet_pubkey': connection_data['wallet_pubkey'][:8] + '...'  # Partial for logging
-            }
+            # If NWC client is available, perform real connection test
+            if NWCClient:
+                try:
+                    # Create NWC client and test connection
+                    nwc_client = NWCClient(connection_data)
+                    
+                    # Run async connection test
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(nwc_client.test_connection())
+                        return result
+                    finally:
+                        loop.close()
+                        
+                except Exception as e:
+                    logging.error(f"[NWC] Real connection test failed: {e}")
+                    socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
+                    return {
+                        'success': False,
+                        'error': f'Connection test failed: {str(e)}'
+                    }
+            else:
+                # Fallback to basic format validation only
+                logging.info(f"[NWC] NWC client not available - format validation only")
+                socketio_logger.info(f"[NWC] Format validated - Relay: {connection_data['relay']}")
+                
+                return {
+                    'success': True,
+                    'relay': connection_data['relay'],
+                    'wallet_pubkey': connection_data['wallet_pubkey'][:8] + '...',
+                    'note': 'Format validation only - full connection test not available'
+                }
+                
         except Exception as e:
             logging.error(f"NWC connection test failed: {str(e)}")
             socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
@@ -187,3 +225,43 @@ class NWCStorage:
                 'success': False,
                 'error': str(e)
             }
+
+    def create_nwc_client(self):
+        """
+        Create NWC client instance from stored connection data.
+        
+        Returns:
+            NWCClient instance or None if not available
+        """
+        if not NWCClient:
+            logging.warning("[NWC] NWC client not available")
+            return None
+            
+        connection_data = self.get_nwc_connection()
+        if not connection_data:
+            logging.error("[NWC] No stored connection data")
+            return None
+            
+        try:
+            return NWCClient(connection_data)
+        except Exception as e:
+            logging.error(f"[NWC] Failed to create client: {e}")
+            return None
+
+    def get_connection_info_safe(self):
+        """
+        Get safe connection info for display (no secrets).
+        
+        Returns:
+            Dict with safe connection details or None
+        """
+        connection = self.get_nwc_connection()
+        if not connection:
+            return None
+            
+        return {
+            'wallet_pubkey_preview': connection.get('wallet_pubkey', '')[:8] + '...',
+            'relay': connection.get('relay', ''),
+            'timestamp': connection.get('timestamp', ''),
+            'connected': True
+        }

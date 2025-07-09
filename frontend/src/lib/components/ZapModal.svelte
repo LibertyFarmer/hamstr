@@ -2,6 +2,7 @@
   import { Modal, Button, Input, Textarea } from 'flowbite-svelte';
   import { onMount } from 'svelte';
   import { baseURL } from '$lib/stores/baseUrlStore';
+  import { ZapType } from '$lib/utils/enums';
  
   export let show = false;
   export let onClose;
@@ -11,20 +12,25 @@
   let zapMessage = 'HAMSTR'; // Default message
   let isSending = false;
   let zapContext = null;
+  let zapType = ZapType.NOTE_ZAP; // Default to note zapping
  
-  $: modalTitle = zapContext ? `⚡ Zap ${zapContext.authorName}` : '⚡ Send Zap';
+  $: modalTitle = zapContext ? 
+    (zapType === ZapType.NOTE_ZAP ? `⚡ Zap Note by ${zapContext.authorName}` : `⚡ Zap ${zapContext.authorName}`) : 
+    '⚡ Send Zap';
  
   $: if (!show) {
     zapAmount = 21;
-    zapMessage = 'Thanks!';
+    zapMessage = 'HAMSTR';
     isSending = false;
     zapContext = null;
+    zapType = ZapType.NOTE_ZAP;
   }
  
   onMount(() => {
     window.addEventListener('openZapModal', (event) => {
       console.log('Received openZapModal event:', event.detail);
       zapContext = event.detail.context;
+      zapType = event.detail.zapType || ZapType.NOTE_ZAP;
       show = true;
     });
     return () => window.removeEventListener('openZapModal');
@@ -58,13 +64,25 @@
 
     isSending = true;
     
+    // Create zap data following new flow structure
     const zapData = {
+      // Basic zap info
       recipient_lud16: zapContext.lud16,
       amount_sats: parseInt(zapAmount),
-      message: zapMessage || ''
+      message: zapMessage || '',
+      
+      // Zap type and context
+      zap_type: zapType,
+      
+      // Note context (for kind 9734 zap note)
+      note_id: zapType === ZapType.NOTE_ZAP ? zapContext.noteId : null,
+      recipient_pubkey: zapContext.authorPubkey,
+      
+      // Additional context for kind 9734 zap note
+      note_content_preview: zapType === ZapType.NOTE_ZAP ? zapContext.content?.substring(0, 50) + '...' : null
     };
 
-    console.log('Submitting zapData:', zapData);
+    console.log('Submitting enhanced zapData:', zapData);
     
     try {
       await onSubmit(zapData);
@@ -80,8 +98,9 @@
     if (!isSending) {
       show = false;
       zapAmount = 21;
-      zapMessage = 'Thanks!';
+      zapMessage = 'HAMSTR';
       zapContext = null;
+      zapType = ZapType.NOTE_ZAP;
       onClose();
     }
   }
@@ -108,18 +127,58 @@
     {#if zapContext}
       <div class="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
         <p class="text-sm font-medium mb-2">
-          Sending zap to @{zapContext.authorName}
+          {#if zapType === ZapType.NOTE_ZAP}
+            Zapping note by @{zapContext.authorName}
+          {:else}
+            Zapping user @{zapContext.authorName}
+          {/if}
         </p>
         <p class="text-sm text-gray-600 dark:text-gray-400">
           Lightning Address: {zapContext.lud16}
         </p>
-        {#if zapContext.content}
+        {#if zapContext.content && zapType === ZapType.NOTE_ZAP}
           <p class="text-sm text-gray-600 dark:text-gray-400 mt-2 truncate">
-            "{zapContext.content}"
+            Note: "{zapContext.content}"
+          </p>
+        {/if}
+        {#if zapContext.noteId && zapType === ZapType.NOTE_ZAP}
+          <p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
+            Note ID: {zapContext.noteId.substring(0, 16)}...
           </p>
         {/if}
       </div>
     {/if}
+
+    <!-- Zap Type Selection (for future profile zapping - commented out for now) -->
+    <!-- 
+    <div class="space-y-2">
+      <label class="text-sm font-medium text-gray-900 dark:text-white">
+        Zap Type
+      </label>
+      <div class="flex space-x-4">
+        <label class="flex items-center">
+          <input 
+            type="radio" 
+            bind:group={zapType} 
+            value={ZapType.NOTE_ZAP}
+            disabled={isSending}
+            class="mr-2"
+          />
+          <span class="text-sm">Zap Note</span>
+        </label>
+        <label class="flex items-center">
+          <input 
+            type="radio" 
+            bind:group={zapType} 
+            value={ZapType.PROFILE_ZAP}
+            disabled={isSending}
+            class="mr-2"
+          />
+          <span class="text-sm">Zap Profile</span>
+        </label>
+      </div>
+    </div>
+    -->
 
     <!-- Zap Amount -->
     <div class="space-y-2">

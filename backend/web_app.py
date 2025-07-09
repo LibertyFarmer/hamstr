@@ -7,7 +7,7 @@ import uuid
 import os
 import logging
 import importlib
-from models import NoteRequestType, NoteType, NWCResponseCode, MessageType
+from models import NoteRequestType, NoteType, MessageType, ZapType
 from protocol_utils import compress_nostr_data, decompress_nostr_data, parse_callsign
 from socketio_logger import init_socketio, get_socketio_logger
 from nostr_sdk import Keys, EventId, EventBuilder, Tag, Kind 
@@ -775,7 +775,7 @@ def test_nwc_connection():
 
 @app.route('/api/send_zap', methods=['POST'])
 def send_zap():
-    """Send zap request via ham radio (similar to send_note pattern)."""
+    """Send zap request via ham radio using new kind 9734 flow."""
     global radio_operation_in_progress
     
     if radio_operation_in_progress:
@@ -795,10 +795,13 @@ def send_zap():
             "message": "Invalid request format"
         }), 400
 
-    # Extract zap data
+    # Extract zap data (new format)
     recipient_lud16 = data.get('recipient_lud16', '')
     amount_sats = data.get('amount_sats', 0)
     message = data.get('message', '')
+    zap_type = data.get('zap_type', 1)  # Default to NOTE_ZAP
+    note_id = data.get('note_id')  # For note zaps
+    recipient_pubkey = data.get('recipient_pubkey', '')
     
     # Validate inputs
     if not recipient_lud16:
@@ -813,6 +816,13 @@ def send_zap():
         return jsonify({
             "success": False,
             "message": "Zap amount must be greater than 0"
+        }), 400
+    
+    if not recipient_pubkey:
+        socketio_logger.error("[CLIENT] No recipient pubkey provided")
+        return jsonify({
+            "success": False,
+            "message": "Recipient pubkey is required"
         }), 400
     
     # Check for NWC connection
@@ -833,13 +843,43 @@ def send_zap():
                 "message": "Invalid NWC connection - missing relay"
             }), 400
         
-        # Create zap packet (bandwidth optimized)
-        # Format: ZAP:recipient:amount:message:relay
-        zap_packet = f"ZAP:{recipient_lud16}:{amount_sats}:{message}:{nwc_relay}"
+        # Get NSEC for signing the zap note
+        nsec = nsec_storage.get_nsec()
+        if not nsec:
+            socketio_logger.error("[CLIENT] No NSEC available for signing zap note")
+            return jsonify({
+                "success": False,
+                "message": "NOSTR key required to sign zap note"
+            }), 400
         
-        socketio_logger.info(f"[CLIENT] Preparing to send zap: {amount_sats} sats to {recipient_lud16}")
+        # Create kind 9734 zap note
+        keys = Keys.parse(nsec)
         
-        # Use existing radio infrastructure (similar to send_note)
+        # Build zap note tags
+        tags = [
+            Tag.parse(["amount", str(amount_sats * 1000)]),  # Amount in millisats
+            Tag.parse(["lnaddr", recipient_lud16]),           # Lightning address
+            Tag.parse(["p", recipient_pubkey])                # Recipient pubkey
+        ]
+        
+        # Add note reference for note zaps
+        if zap_type == ZapType.NOTE_ZAP and note_id:
+            tags.append(Tag.parse(["e", note_id]))
+        
+        # Add NWC relay for server processing
+        tags.append(Tag.parse(["relay", nwc_relay]))
+
+        # Create and sign the kind 9734 event
+        builder = EventBuilder(Kind(9734), message, tags)
+        signed_event = builder.to_event(keys)
+        
+        # Convert to JSON and compress for transmission
+        zap_note_json = signed_event.as_json()
+        compressed_note = compress_nostr_data(zap_note_json)
+        
+        socketio_logger.info(f"[CLIENT] Preparing to send kind 9734 zap note: {amount_sats} sats to {recipient_lud16}")
+        
+        # Use existing radio infrastructure
         radio_operation_in_progress = True
         result_container = [None]
         
@@ -849,99 +889,39 @@ def send_zap():
                 client = Client(BASE_DIR)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
                 
-                # Use existing connect and send infrastructure
-                session = client.core.connect(server_callsign)
-                if session:
-                    # Send zap request packet
-                    success = client.core.send_single_packet(
-                        session, 
-                        0, 
-                        0, 
-                        zap_packet.encode(), 
-                        MessageType.ZAP_REQUEST
-                    )
-                    
-                    if success:
-                        # Wait for zap response
-                        source_callsign, message, msg_type = client.core.receive_message(session, timeout=30)
-                        
-                        if msg_type == MessageType.ZAP_RESPONSE:
-                            # Parse response code (format: "17:0" or "17:1" etc.)
-                            if ":" in message:
-                                _, response_code = message.split(":", 1)
-                                result_container[0] = int(response_code)
-                            else:
-                                result_container[0] = 99  # Unknown error
-                        else:
-                            result_container[0] = 10  # Network error
-                    else:
-                        result_container[0] = 10  # Network error
-                        
-                    client.core.connection_manager.initiate_disconnect(session)
+                # Step 1: Send kind 9734 zap note using proper packet system
+                socketio_logger.info("[CLIENT] Sending kind 9734 zap note via proper packet system")
+                success = client.connect_and_send_note(server_callsign, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
+                
+                if success:
+                    socketio_logger.info("[CLIENT] Kind 9734 zap note sent successfully")
+                    result_container[0] = {"success": True, "message": "⚡ Zap note sent successfully!"}
                 else:
-                    result_container[0] = 10  # Network error
+                    socketio_logger.error("[CLIENT] Failed to send kind 9734 zap note")
+                    result_container[0] = {"success": False, "message": "Failed to send zap note"}
                     
             except Exception as e:
-                socketio_logger.error(f"[SYSTEM] Error in zap radio operation: {e}")
-                result_container[0] = 99  # Unknown error
-            finally:
-                global radio_operation_in_progress
-                radio_operation_in_progress = False
+                socketio_logger.error(f"[CLIENT] Radio operation error: {e}")
+                result_container[0] = {"success": False, "message": f"Radio error: {str(e)}"}
         
-        # Start radio operation in thread (following your existing pattern)
-        import threading
+        # Execute radio operation in thread
         radio_thread = threading.Thread(target=radio_operation)
         radio_thread.start()
-        radio_thread.join(timeout=45)  # 45 second timeout for zap
+        radio_thread.join(timeout=120)  # Longer timeout for multi-step process
         
-        radio_operation_in_progress = False
-        
-        # Check if operation timed out
         if radio_thread.is_alive():
-            socketio_logger.error("[CLIENT] Zap operation timed out")
-            return jsonify({
-                "success": False, 
-                "message": "Failed to send zap - operation timed out"
-            }), 500
-
-        # Check result
-        if result_container[0] is None:
-            socketio_logger.error("[CLIENT] Failed to send zap - no response")
-            return jsonify({
-                "success": False,
-                "message": "Failed to send zap - no response from server"
-            }), 500
-
-        # Process result using NWCResponseCode
-        response_code = NWCResponseCode(result_container[0])
+            result_container[0] = {"success": False, "message": "Radio operation timeout"}
         
-        if response_code == NWCResponseCode.SUCCESS:
-            socketio_logger.info(f"[CLIENT] Zap sent successfully: {amount_sats} sats")
-            return jsonify({
-                "success": True,
-                "message": "Zap sent successfully!"
-            }), 200
-        else:
-            # Get error message from models
-            from models import NWC_ERROR_MESSAGES
-            error_info = NWC_ERROR_MESSAGES.get(response_code, {
-                "text": f"Zap failed (Code: {response_code.value})",
-                "type": "error"
-            })
-            
-            socketio_logger.error(f"[CLIENT] Zap failed: {error_info['text']}")
-            return jsonify({
-                "success": False,
-                "message": error_info['text']
-            }), 400
-
+        return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
+        
     except Exception as e:
-        radio_operation_in_progress = False
-        socketio_logger.error(f"[SYSTEM] Error sending zap: {e}")
+        socketio_logger.error(f"[CLIENT] Error creating zap note: {e}")
         return jsonify({
             "success": False,
-            "message": f"Error processing zap: {str(e)}"
+            "message": f"Error creating zap note: {str(e)}"
         }), 500
+    finally:
+        radio_operation_in_progress = False
     
 # Static file routes
 @app.route('/', defaults={'path': ''})

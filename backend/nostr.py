@@ -765,6 +765,42 @@ def publish_note(note):
         logging.error(f"[PUBLISH] Error in publish_note: {e}")
         return False
     
+def create_nwc_payment_command(nwc_storage, lightning_invoice):
+
+    try:
+        # Get NWC connection data
+        connection_data = nwc_storage.get_nwc_connection()
+        if not connection_data:
+            logging.error("[NWC] No stored NWC connection")
+            return None
+        
+        # Create NWC client
+        nwc_client = nwc_storage.create_nwc_client()
+        if not nwc_client:
+            logging.error("[NWC] Failed to create NWC client")
+            return None
+        
+        # Create payment request payload
+        payment_request = {
+            "method": "pay_invoice",
+            "params": {
+                "invoice": lightning_invoice
+            }
+        }
+        
+        # Encrypt the payment command using NIP-04
+        encrypted_command = nwc_client._encrypt_nip04(json.dumps(payment_request))
+        
+        # Format for transmission: "NWC:encrypted_command:wallet_pubkey:relay"
+        nwc_command = f"NWC:{encrypted_command}:{connection_data['wallet_pubkey']}:{connection_data['relay']}"
+        
+        logging.info("[NWC] Created encrypted payment command")
+        return nwc_command
+        
+    except Exception as e:
+        logging.error(f"[NWC] Error creating payment command: {e}")
+        return None
+    
 async def get_reference_author(client, note_id):
     """Get author display name for a referenced note."""
     try:

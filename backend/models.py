@@ -18,8 +18,16 @@ class MessageType(Enum):
     RETRY = 13
     PKT_MISSING = 14
     NOTE = 15
-    ZAP_REQUEST = 16
-    ZAP_RESPONSE = 17
+    ZAP_REQUEST = 16          # Legacy - keep for compatibility
+    ZAP_RESPONSE = 17         # Legacy - keep for compatibility
+    
+    # New NWC Zap Flow Message Types
+    ZAP_KIND9734_REQUEST = 18    # Client sends signed kind 9734 zap note
+    INVOICE_RESPONSE = 19        # Server returns Lightning invoice
+    NWC_PAYMENT_REQUEST = 20     # Client sends encrypted NIP-47 command  
+    NWC_PAYMENT_RESPONSE = 21    # Server forwards NWC wallet response
+    ZAP_SUCCESS_CONFIRM = 22     # Client confirms payment success
+    ZAP_FAILED = 23             # Client reports payment failure
 
 # New SessionState enum
 class SessionState(Enum):
@@ -34,7 +42,8 @@ class SessionState(Enum):
     DISCONNECTING = 8
     DONE_ACK = 9
     DISCONNECTED = 10
-    WAITING_FOR_MISSING = 11  
+    WAITING_FOR_MISSING = 11
+    ZAP_IN_PROGRESS = 12  # New state for multi-step zap process
 
 # Existing ModemState enum (keep this as is)
 class ModemState(Enum):
@@ -51,7 +60,6 @@ class ModemState(Enum):
     DISCONNECTED = 10
 
 #Note types to save bandwidth
-
 class NoteType(Enum):
     STANDARD = 1  # Regular note
     REPLY = 2     # Direct reply 
@@ -68,6 +76,10 @@ class NoteRequestType(Enum):
     SEARCH_USER = 6    # Search by npub/name
     TEST_ERROR = 99    # For testing error responses
 
+# Zap target types for different zap scenarios
+class ZapType(Enum):
+    NOTE_ZAP = 1      # Zapping a specific note (primary use case)
+    PROFILE_ZAP = 2   # Zapping a user profile (future use - commented out in UI)
 
 # NWC Responses to save bandwidth
 class NWCResponseCode(Enum):
@@ -116,3 +128,9 @@ class Session:
         self.is_note_writing = False
         self.note_type = None  # Track type of note being sent
         self.reply_context = None  # Store note_id and pubkey for replies
+        
+        # New NWC zap session data (for caching during multi-step process)
+        self.zap_lightning_invoice = None    # Cache LN invoice for retry
+        self.zap_kind9734_note = None        # Cache original zap note
+        self.zap_nwc_command = None          # Cache NWC payment command
+        self.zap_retry_count = 0             # Track retry attempts
