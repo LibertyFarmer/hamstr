@@ -100,6 +100,8 @@ cd ..
 - Socket.IO real-time logging
 - Packet splitting, crc checks, and ax25 format for valid packet checks and automatic packet resend requests.
 - Responsive client interface with dark mode support on app
+- Server GUI interface
+- Frontend and UI implements with settings
 
 ## Future Features
 
@@ -109,8 +111,7 @@ cd ..
 - Reticulum network integration and rnode support
 - Decentralized authentication for global 24/7 based servers like winlink.
 - Performance enhancements for higher baud rates especially those on VHF/UHF
-- Server GUI interface
-- Frontend and UI improvements
+
 
 
 ## Technical Notes ## 
