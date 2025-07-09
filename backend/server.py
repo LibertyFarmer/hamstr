@@ -382,38 +382,93 @@ class Server:
                 if len(session.received_packets) == total_packets:
                     logging.info("All zap packets received, processing kind 9734 note")
                     
-                    # Reassemble and decompress the zap note
-                    compressed_note = self.reassemble_note(session.received_packets)
-                    
-                    try:
-                        decompressed_note = decompress_nostr_data(compressed_note)
-                        zap_note_json = json.loads(decompressed_note)
-                        
-                        logging.info(f"[ZAP] Successfully parsed kind 9734 zap note")
-                        
-                        # For now, just send a simple success response
-                        response_message = "ZAP_NOTE_RECEIVED"
-                        success = self.core.send_single_packet(
-                            session, 0, 0,
-                            response_message.encode(),
-                            MessageType.RESPONSE
-                        )
-                        
-                        if success:
-                            logging.info(f"[ZAP] Sent acknowledgment to client")
-                        
-                        # Clear received packets for next operation
-                        session.received_packets.clear()
-                        
-                    except Exception as e:
-                        logging.error(f"[ZAP] Error processing kind 9734 zap note: {e}")
-                        # Send error response
-                        error_message = "ZAP_NOTE_ERROR"
-                        self.core.send_single_packet(
-                            session, 0, 0,
-                            error_message.encode(),
-                            MessageType.RESPONSE
-                        )
+                    # Follow DATA_REQUEST pattern: Send READY and wait for client READY
+                    if self.core.send_ready(session):
+                        logging.info("[ZAP] Sent READY, waiting for client READY")
+                        if self.core.wait_for_ready(session):
+                            try:
+                                # Reassemble and decompress the zap note
+                                compressed_note = self.reassemble_note(session.received_packets)
+                                decompressed_note = decompress_nostr_data(compressed_note)
+                                zap_note_json = json.loads(decompressed_note)
+                                
+                                logging.info(f"[ZAP] Successfully parsed kind 9734 zap note")
+                                
+                                # Extract zap data from kind 9734 note
+                                zap_data = self.parse_kind9734_zap_note(zap_note_json)
+                                
+                                if zap_data:
+                                    # Generate Lightning invoice using LNURL-pay
+                                    logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
+                                    
+                                    invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
+                                        zap_data['lnaddr'], 
+                                        zap_data['amount_sats'], 
+                                        zap_data['message']
+                                    ))
+                                    
+                                    if invoice:
+                                        # Store zap context for future NWC payment step
+                                        session.zap_kind9734_note = zap_note_json
+                                        session.zap_lightning_invoice = invoice
+                                        session.zap_nwc_relay = zap_data.get('nwc_relay')
+                                        
+                                        # Create invoice response (compressed like other responses)
+                                        invoice_response = json.dumps({
+                                            "success": True,
+                                            "invoice": invoice,
+                                            "amount_sats": zap_data['amount_sats'],
+                                            "recipient": zap_data['lnaddr']
+                                        })
+                                        
+                                        compressed_response = compress_nostr_data(invoice_response)
+                                        
+                                        # Send invoice response back to client using DATA_REQUEST pattern
+                                        if self.core.send_response(session, compressed_response):
+                                            logging.info(f"[ZAP] Lightning invoice sent to client")
+                                        else:
+                                            logging.error(f"[ZAP] Failed to send invoice response")
+                                    else:
+                                        # Invoice generation failed - send error response
+                                        error_response = json.dumps({
+                                            "success": False,
+                                            "error": error or "INVOICE_GENERATION_FAILED",
+                                            "message": "Failed to generate Lightning invoice"
+                                        })
+                                        
+                                        compressed_error = compress_nostr_data(error_response)
+                                        self.core.send_response(session, compressed_error)
+                                        logging.error(f"[ZAP] Invoice generation failed: {error}")
+                                else:
+                                    # Zap note parsing failed
+                                    error_response = json.dumps({
+                                        "success": False,
+                                        "error": "INVALID_ZAP_NOTE",
+                                        "message": "Failed to parse kind 9734 zap note"
+                                    })
+                                    
+                                    compressed_error = compress_nostr_data(error_response)
+                                    self.core.send_response(session, compressed_error)
+                                    logging.error(f"[ZAP] Failed to parse kind 9734 zap note")
+                                
+                                # Clear received packets for next operation
+                                session.received_packets.clear()
+                                
+                            except Exception as e:
+                                logging.error(f"[ZAP] Error processing kind 9734 zap note: {e}")
+                                # Send error response
+                                error_response = json.dumps({
+                                    "success": False,
+                                    "error": "PROCESSING_ERROR",
+                                    "message": f"Error processing zap: {str(e)}"
+                                })
+                                
+                                compressed_error = compress_nostr_data(error_response)
+                                self.core.send_response(session, compressed_error)
+                        else:
+                            logging.error("[ZAP] Did not receive READY message from client")
+                    else:
+                        logging.error("[ZAP] Failed to send READY for ZAP_KIND9734_REQUEST")
 
             elif msg_type == MessageType.NWC_PAYMENT_REQUEST:
                 logging.info(f"[NWC] Received NWC_PAYMENT_REQUEST using proper packet system")

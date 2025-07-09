@@ -891,7 +891,14 @@ def send_zap():
                 
                 # Step 1: Send kind 9734 zap note using proper packet system
                 socketio_logger.info("[CLIENT] Sending kind 9734 zap note via proper packet system")
-                success = client.connect_and_send_note(server_callsign, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
+                # Connect to server
+                session = client.core.connect(server_callsign)
+                if session:
+                    # Send zap note using proper packet system with correct message type
+                    success = client.core.send_message(session, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
+                    client.core.disconnect(session)
+                else:
+                    success = False
                 
                 if success:
                     socketio_logger.info("[CLIENT] Kind 9734 zap note sent successfully")
