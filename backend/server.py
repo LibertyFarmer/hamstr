@@ -380,95 +380,119 @@ class Server:
                 
                 # Check if we have all packets
                 if len(session.received_packets) == total_packets:
-                    logging.info("All zap packets received, processing kind 9734 note")
+                    logging.info("All zap packets received, waiting for DONE from client")
                     
-                    # Follow DATA_REQUEST pattern: Send READY and wait for client READY
-                    if self.core.send_ready(session):
-                        logging.info("[ZAP] Sent READY, waiting for client READY")
-                        if self.core.wait_for_ready(session):
-                            try:
-                                # Reassemble and decompress the zap note
-                                compressed_note = self.reassemble_note(session.received_packets)
-                                decompressed_note = decompress_nostr_data(compressed_note)
-                                zap_note_json = json.loads(decompressed_note)
+                    # Wait for DONE message (like DATA_REQUEST pattern)
+                    done_received = False
+                    start_time = time.time()
+                    timeout = config.CONNECTION_TIMEOUT
+                    
+                    while time.time() - start_time < timeout and not done_received:
+                        source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
+                        if msg_type == MessageType.DONE:
+                            logging.info("[ZAP] Received DONE from client, sending DONE_ACK")
+                            # Send DONE_ACK
+                            self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                            done_received = True
+                            break
+                    
+                    if not done_received:
+                        logging.error("[ZAP] Timeout waiting for DONE from client")
+                        continue
+                    
+                    # Now process the zap and follow READY pattern
+                    try:
+                        # Reassemble and decompress the zap note
+                        compressed_note = self.reassemble_note(session.received_packets)
+                        decompressed_note = decompress_nostr_data(compressed_note)
+                        zap_note_json = json.loads(decompressed_note)
+                        
+                        logging.info(f"[ZAP] Successfully parsed kind 9734 zap note")
+                        
+                        # Extract zap data from kind 9734 note
+                        zap_data = self.parse_kind9734_zap_note(zap_note_json)
+                        
+                        if zap_data:
+                            # Generate Lightning invoice FIRST (before sending READY)
+                            logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
+                            
+                            invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
+                                zap_data['lnaddr'], 
+                                zap_data['amount_sats'], 
+                                zap_data['message']
+                            ))
+                            
+                            if invoice:
+                                # Store zap context for future NWC payment step
+                                session.zap_kind9734_note = zap_note_json
+                                session.zap_lightning_invoice = invoice
+                                session.zap_nwc_relay = zap_data.get('nwc_relay')
                                 
-                                logging.info(f"[ZAP] Successfully parsed kind 9734 zap note")
-                                
-                                # Extract zap data from kind 9734 note
-                                zap_data = self.parse_kind9734_zap_note(zap_note_json)
-                                
-                                if zap_data:
-                                    # Generate Lightning invoice using LNURL-pay
-                                    logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
-                                    
-                                    invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
-                                        zap_data['lnaddr'], 
-                                        zap_data['amount_sats'], 
-                                        zap_data['message']
-                                    ))
-                                    
-                                    if invoice:
-                                        # Store zap context for future NWC payment step
-                                        session.zap_kind9734_note = zap_note_json
-                                        session.zap_lightning_invoice = invoice
-                                        session.zap_nwc_relay = zap_data.get('nwc_relay')
+                                # NOW send READY (server ready to send invoice)
+                                logging.info("[ZAP] Invoice generated successfully, sending READY")
+                                if self.core.send_ready(session):
+                                    logging.info("[ZAP] Sent READY, waiting for client READY")
+                                    if self.core.wait_for_ready(session):
+                                        logging.info("[ZAP] Received client READY, sending invoice response")
                                         
-                                        # Create invoice response (compressed like other responses)
+                                        # Create invoice response
                                         invoice_response = json.dumps({
                                             "success": True,
                                             "invoice": invoice,
                                             "amount_sats": zap_data['amount_sats'],
-                                            "recipient": zap_data['lnaddr']
+                                            "message": "Lightning invoice generated successfully"
                                         })
                                         
                                         compressed_response = compress_nostr_data(invoice_response)
                                         
-                                        # Send invoice response back to client using DATA_REQUEST pattern
+                                        # Send invoice response back to client
                                         if self.core.send_response(session, compressed_response):
-                                            logging.info(f"[ZAP] Lightning invoice sent to client")
+                                            logging.info(f"[ZAP] Lightning invoice sent to client successfully")
                                         else:
                                             logging.error(f"[ZAP] Failed to send invoice response")
                                     else:
-                                        # Invoice generation failed - send error response
+                                        logging.error("[ZAP] Did not receive READY message from client")
+                                else:
+                                    logging.error("[ZAP] Failed to send READY")
+                            else:
+                                # Invoice generation failed - still follow READY pattern
+                                logging.error(f"[ZAP] Invoice generation failed: {error}")
+                                if self.core.send_ready(session):
+                                    if self.core.wait_for_ready(session):
                                         error_response = json.dumps({
                                             "success": False,
-                                            "error": error or "INVOICE_GENERATION_FAILED",
-                                            "message": "Failed to generate Lightning invoice"
+                                            "error": "INVOICE_GENERATION_ERROR",
+                                            "message": f"Failed to generate Lightning invoice: {error}"
                                         })
-                                        
                                         compressed_error = compress_nostr_data(error_response)
                                         self.core.send_response(session, compressed_error)
-                                        logging.error(f"[ZAP] Invoice generation failed: {error}")
-                                else:
-                                    # Zap note parsing failed
+                        else:
+                            # Zap note parsing failed
+                            logging.error(f"[ZAP] Failed to parse kind 9734 zap note")
+                            if self.core.send_ready(session):
+                                if self.core.wait_for_ready(session):
                                     error_response = json.dumps({
                                         "success": False,
                                         "error": "INVALID_ZAP_NOTE",
                                         "message": "Failed to parse kind 9734 zap note"
                                     })
-                                    
                                     compressed_error = compress_nostr_data(error_response)
                                     self.core.send_response(session, compressed_error)
-                                    logging.error(f"[ZAP] Failed to parse kind 9734 zap note")
-                                
-                                # Clear received packets for next operation
-                                session.received_packets.clear()
-                                
-                            except Exception as e:
-                                logging.error(f"[ZAP] Error processing kind 9734 zap note: {e}")
-                                # Send error response
+                        
+                        # Clear received packets
+                        session.received_packets.clear()
+                        
+                    except Exception as e:
+                        logging.error(f"[ZAP] Error processing zap: {e}")
+                        if self.core.send_ready(session):
+                            if self.core.wait_for_ready(session):
                                 error_response = json.dumps({
                                     "success": False,
                                     "error": "PROCESSING_ERROR",
                                     "message": f"Error processing zap: {str(e)}"
                                 })
-                                
                                 compressed_error = compress_nostr_data(error_response)
                                 self.core.send_response(session, compressed_error)
-                        else:
-                            logging.error("[ZAP] Did not receive READY message from client")
-                    else:
-                        logging.error("[ZAP] Failed to send READY for ZAP_KIND9734_REQUEST")
 
             elif msg_type == MessageType.NWC_PAYMENT_REQUEST:
                 logging.info(f"[NWC] Received NWC_PAYMENT_REQUEST using proper packet system")
@@ -632,12 +656,13 @@ class Server:
             command_parts = request.strip().split(' ', 1)
             logging.info(f"Step 2: Command parts: {command_parts}")
             
-            if command_parts[0] != "GET_NOTES":
+            # Check if it's a valid command type
+            if command_parts[0] not in ["GET_NOTES", "SEND_ZAP"]:
                 logging.error("Step 3a: Unknown request type")
                 return json.dumps({
                     "success": False,
                     "error_type": "INVALID_REQUEST",
-                    "message": "Invalid request type - must be GET_NOTES"
+                    "message": "Invalid request type - must be GET_NOTES or SEND_ZAP"
                 })
 
             if len(command_parts) != 2:
@@ -651,65 +676,134 @@ class Server:
             params = command_parts[1].split('|')
             logging.info(f"Step 4: Params after split: {params}")
             
-            if len(params) < 2:
-                logging.error("Step 5: Not enough parameters")
-                return json.dumps({
-                    "success": False,
-                    "error_type": "MISSING_PARAMS",
-                    "message": "Missing required parameters"
-                })
-
-            request_type = NoteRequestType(int(params[0]))
-            count = int(params[1])
-            search_text = params[2] if len(params) > 2 else None
-            
-            logging.info(f"Step 6: Parsed values - type: {request_type}, count: {count}, search: {search_text}")
-            logging.info(f"Step 7: About to select handler for type {request_type}")
-            
-            response_data = None
-            # Handle each request type
-            if request_type == NoteRequestType.SPECIFIC_USER:
-                logging.info("Step 8a: Using SPECIFIC_USER handler")
-                response_data = run_get_recent_notes(search_text, count)
-            elif request_type == NoteRequestType.FOLLOWING:
-                logging.info("Step 8b: Using FOLLOWING handler")
-                if not search_text:
+            # Handle SEND_ZAP requests
+            if command_parts[0] == "SEND_ZAP":
+                logging.info("Processing SEND_ZAP request")
+                
+                if len(params) < 2:
+                    logging.error("SEND_ZAP: Missing zap note data")
                     return json.dumps({
                         "success": False,
-                        "error_type": "MISSING_NPUB",
-                        "message": "NPUB is required for this request type"
+                        "error_type": "MISSING_PARAMS",
+                        "message": "Missing zap note data"
                     })
-                response_data = run_get_recent_notes(search_text, count, request_type)
-            elif request_type == NoteRequestType.GLOBAL:
-                logging.info("Step 8c: Using GLOBAL handler")
-                response_data = run_get_recent_notes(search_text, count, request_type)
-            elif request_type == NoteRequestType.SEARCH_USER:
-                if not search_text:
-                    logging.error("Step 8d: Missing search text for user search")
+                
+                compressed_note = params[1]
+                
+                try:
+                    # Decompress and parse the kind 9734 zap note  
+                    decompressed_note = decompress_nostr_data(compressed_note)
+                    zap_note_json = json.loads(decompressed_note)
+                    
+                    # Extract zap data from kind 9734 note
+                    zap_data = self.parse_kind9734_zap_note(zap_note_json)
+                    
+                    if zap_data:
+                        # Generate Lightning invoice using LNURL-pay
+                        logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats")
+                        
+                        invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
+                            zap_data['lnaddr'], 
+                            zap_data['amount_sats'], 
+                            zap_data['message']
+                        ))
+                        
+                        if invoice:
+                            # Create invoice response
+                            invoice_response = json.dumps({
+                                "success": True,
+                                "invoice": invoice,
+                                "amount_sats": zap_data['amount_sats'],
+                                "message": "Lightning invoice generated successfully"
+                            })
+                            
+                            logging.info("[ZAP] Lightning invoice generated successfully")
+                            return compress_nostr_data(invoice_response)
+                        else:
+                            error_response = json.dumps({
+                                "success": False,
+                                "error": "INVOICE_GENERATION_ERROR",
+                                "message": f"Failed to generate Lightning invoice: {error}"
+                            })
+                            return compress_nostr_data(error_response)
+                    else:
+                        error_response = json.dumps({
+                            "success": False,
+                            "error": "INVALID_ZAP_NOTE",
+                            "message": "Failed to parse kind 9734 zap note"
+                        })
+                        return compress_nostr_data(error_response)
+                        
+                except Exception as e:
+                    logging.error(f"[ZAP] Error processing zap request: {e}")
+                    error_response = json.dumps({
+                        "success": False,
+                        "error": "PROCESSING_ERROR",
+                        "message": f"Error processing zap: {str(e)}"
+                    })
+                    return compress_nostr_data(error_response)
+
+            # Handle GET_NOTES requests (existing logic)
+            elif command_parts[0] == "GET_NOTES":
+                if len(params) < 2:
+                    logging.error("Step 5: Not enough parameters")
                     return json.dumps({
                         "success": False,
-                        "error_type": "MISSING_SEARCH",
-                        "message": "Search text is required for user search"
+                        "error_type": "MISSING_PARAMS",
+                        "message": "Missing required parameters"
                     })
-                logging.info(f"Step 8d: Using search_user_notes handler")
-                response_data = run_get_recent_notes(search_text, count, request_type)
-            elif request_type == NoteRequestType.SEARCH_TEXT:
-                logging.info("Step 8e: Using SEARCH_TEXT handler")
-                response_data = search_nostr(request_type, count, search_text)
-            elif request_type == NoteRequestType.SEARCH_HASHTAG:
-                logging.info("Step 8f: Using SEARCH_HASHTAG handler")
-                response_data = search_nostr(request_type, count, search_text)
-            else:
-                logging.error(f"Step 8g: Unknown request type: {request_type}")
-                return json.dumps({
-                    "success": False,
-                    "error_type": "INVALID_REQUEST_TYPE",
-                    "message": f"Invalid request type: {request_type.name}"
-                })
 
-            # Compress the response before returning
-            compressed_response = compress_nostr_data(response_data)
-            return compressed_response
+                request_type = NoteRequestType(int(params[0]))
+                count = int(params[1])
+                search_text = params[2] if len(params) > 2 else None
+                
+                logging.info(f"Step 6: Parsed values - type: {request_type}, count: {count}, search: {search_text}")
+                logging.info(f"Step 7: About to select handler for type {request_type}")
+                
+                response_data = None
+                # Handle each request type
+                if request_type == NoteRequestType.SPECIFIC_USER:
+                    logging.info("Step 8a: Using SPECIFIC_USER handler")
+                    response_data = run_get_recent_notes(search_text, count)
+                elif request_type == NoteRequestType.FOLLOWING:
+                    logging.info("Step 8b: Using FOLLOWING handler")
+                    if not search_text:
+                        return json.dumps({
+                            "success": False,
+                            "error_type": "MISSING_NPUB",
+                            "message": "NPUB is required for this request type"
+                        })
+                    response_data = run_get_recent_notes(search_text, count, request_type)
+                elif request_type == NoteRequestType.GLOBAL:
+                    logging.info("Step 8c: Using GLOBAL handler")
+                    response_data = run_get_recent_notes(search_text, count, request_type)
+                elif request_type == NoteRequestType.SEARCH_USER:
+                    if not search_text:
+                        logging.error("Step 8d: Missing search text for user search")
+                        return json.dumps({
+                            "success": False,
+                            "error_type": "MISSING_SEARCH",
+                            "message": "Search text is required for user search"
+                        })
+                    logging.info(f"Step 8d: Using search_user_notes handler")
+                    response_data = run_get_recent_notes(search_text, count, request_type)
+                elif request_type == NoteRequestType.SEARCH_TEXT:
+                    logging.info("Step 8e: Using SEARCH_TEXT handler")
+                    response_data = search_nostr(request_type, count, search_text)
+                elif request_type == NoteRequestType.SEARCH_HASHTAG:
+                    logging.info("Step 8f: Using SEARCH_HASHTAG handler")
+                    response_data = search_nostr(request_type, count, search_text)
+                else:
+                    logging.error(f"Step 8g: Unknown request type: {request_type}")
+                    return json.dumps({
+                        "success": False,
+                        "error_type": "INVALID_REQUEST_TYPE",
+                        "message": f"Invalid request type: {request_type.name}"
+                    })
+
+                # Compress the response before returning
+                compressed_response = compress_nostr_data(response_data)
+                return compressed_response
 
         except ValueError as e:
             logging.error(f"Error in request processing: {e}")

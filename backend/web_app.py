@@ -889,23 +889,52 @@ def send_zap():
                 client = Client(BASE_DIR)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
                 
-                # Step 1: Send kind 9734 zap note using proper packet system
-                socketio_logger.info("[CLIENT] Sending kind 9734 zap note via proper packet system")
-                # Connect to server
+                socketio_logger.info("[CLIENT] Sending kind 9734 zap note via ZAP_KIND9734_REQUEST")
+                
                 session = client.core.connect(server_callsign)
                 if session:
-                    # Send zap note using proper packet system with correct message type
-                    success = client.core.send_message(session, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
+                    # Step 1: Send zap note packets + DONE (like send_message does)
+                    success = client.core.message_processor.send_message(session, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
+                    
+                    if success:
+                        socketio_logger.info("[CLIENT] Zap packets and DONE sent successfully")
+                        
+                        # Step 2: Wait for server READY (server is ready to send invoice)
+                        if client.core.wait_for_specific_message(session, MessageType.READY):
+                            socketio_logger.info("[CLIENT] Received READY from server, sending READY")
+                            
+                            # Step 3: Send client READY (client is ready to receive invoice)
+                            if client.core.send_ready(session):
+                                socketio_logger.info("[CLIENT] READY sent, waiting for invoice response")
+                                
+                                # Step 4: Wait for invoice response
+                                response = client.core.receive_response(session)
+                                if response:
+                                    # Decompress and show the invoice
+                                    decompressed_response = decompress_nostr_data(response)
+                                    socketio_logger.info(f"[CLIENT] Received invoice response: {decompressed_response}")
+                                    
+                                    # Parse and show just the invoice
+                                    try:
+                                        invoice_data = json.loads(decompressed_response)
+                                        if invoice_data.get('success') and 'invoice' in invoice_data:
+                                            socketio_logger.info(f"[CLIENT] Lightning Invoice: {invoice_data['invoice']}")
+                                    except:
+                                        pass
+                            else:
+                                socketio_logger.error("[CLIENT] Failed to send READY")
+                                result_container[0] = {"success": False, "message": "Failed to send READY"}
+                        else:
+                            socketio_logger.error("[CLIENT] Did not receive READY from server")
+                            result_container[0] = {"success": False, "message": "Server did not send READY"}
+                    else:
+                        socketio_logger.error("[CLIENT] Failed to send zap packets")
+                        result_container[0] = {"success": False, "message": "Failed to send zap packets"}
+                    
                     client.core.disconnect(session)
                 else:
-                    success = False
-                
-                if success:
-                    socketio_logger.info("[CLIENT] Kind 9734 zap note sent successfully")
-                    result_container[0] = {"success": True, "message": "⚡ Zap note sent successfully!"}
-                else:
-                    socketio_logger.error("[CLIENT] Failed to send kind 9734 zap note")
-                    result_container[0] = {"success": False, "message": "Failed to send zap note"}
+                    socketio_logger.error("[CLIENT] Failed to connect to server")
+                    result_container[0] = {"success": False, "message": "Failed to connect to server"}
                     
             except Exception as e:
                 socketio_logger.error(f"[CLIENT] Radio operation error: {e}")
@@ -929,7 +958,6 @@ def send_zap():
         }), 500
     finally:
         radio_operation_in_progress = False
-    
 # Static file routes
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
