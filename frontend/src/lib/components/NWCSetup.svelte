@@ -35,7 +35,7 @@
     try {
       isConnecting = true;
 
-      // First test the connection
+      // Test the connection AND store if successful (new combined flow)
       const testResponse = await fetch(`${apiBaseUrl}/api/test_nwc`, {
         method: 'POST',
         headers: {
@@ -46,38 +46,28 @@
       
       const testResult = await testResponse.json();
       
-      if (!testResult.success) {
-        dispatch('nwcSaved', {
-          success: false,
-          message: testResult.message || 'Invalid NWC URI format'
-        });
-        return;
-      }
-
-      // If test passes, store the connection
-      const response = await fetch(`${apiBaseUrl}/api/nwc`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ nwc_uri: nwcUri })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
+      if (testResult.success && testResult.stored) {
+        // Connection successful and stored
         hasNwcConnection = true;
         nwcUri = '';
         showNwcUri = false;
         await checkNwcConnection(); // Refresh connection info
+        
         dispatch('nwcSaved', {
           success: true,
-          message: '⚡ Lightning wallet connected successfully!'
+          message: testResult.message || '⚡ Lightning wallet connected successfully!'
         });
-      } else {
+      } else if (testResult.success && !testResult.stored) {
+        // Connection worked but storage failed
         dispatch('nwcSaved', {
           success: false,
-          message: data.message || 'Failed to connect wallet'
+          message: testResult.message || 'Connection successful but failed to store securely'
+        });
+      } else {
+        // Connection failed
+        dispatch('nwcSaved', {
+          success: false,
+          message: testResult.message || testResult.error || 'Failed to connect to wallet'
         });
       }
     } catch (error) {

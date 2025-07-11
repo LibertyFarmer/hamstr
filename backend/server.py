@@ -288,33 +288,100 @@ class Server:
             return None
 
     async def forward_nwc_payment(self, encrypted_command, wallet_pubkey, relay_url):
-        """Forward encrypted NWC payment command to wallet relay."""
+        """Forward encrypted NWC payment command to wallet relay and get response."""
         try:
             import websockets
             import json
+            import secrets
             
-            logging.info(f"[NWC] Connecting to relay: {relay_url}")
+            logging.info(f"[NWC] Connecting to wallet relay: {relay_url}")
             
             # Connect to NWC relay
             async with websockets.connect(relay_url) as websocket:
-                # Create NIP-47 payment request event (kind 23194)
-                # Note: This is a simplified version - the encrypted_command should be 
-                # properly formatted as a NOSTR event, but for now we'll send it directly
+                logging.info(f"[NWC] Connected to wallet relay")
                 
-                # For now, return mock success to test the flow
-                # TODO: Implement proper NIP-47 event creation and relay communication
-                logging.info(f"[NWC] Mock: Payment forwarded to wallet")
+                # Subscribe to responses from the wallet
+                subscription_id = secrets.token_hex(8)
+                subscribe_msg = [
+                    "REQ",
+                    subscription_id,
+                    {
+                        "kinds": [23195],  # NWC response kind
+                        "authors": [wallet_pubkey],
+                        "limit": 1
+                    }
+                ]
                 
+                await websocket.send(json.dumps(subscribe_msg))
+                logging.info(f"[NWC] Subscribed to wallet responses")
+                
+                # Create and send the NWC payment request event
+                # Note: The encrypted_command should already be a properly formatted NIP-47 event
+                # For now, we'll create a simple event structure
+                
+                import time
+                nwc_event = {
+                    "kind": 23194,  # NWC request kind
+                    "created_at": int(time.time()),
+                    "content": encrypted_command,
+                    "tags": [["p", wallet_pubkey]],
+                    "pubkey": "temp_client_pubkey",  # This should be the client's pubkey
+                    "id": "temp_event_id",
+                    "sig": "temp_signature"
+                }
+                
+                # Send the payment request
+                request_msg = ["EVENT", nwc_event]
+                await websocket.send(json.dumps(request_msg))
+                logging.info(f"[NWC] Sent payment request to wallet")
+                
+                # Wait for wallet response
+                response_timeout = 20  # 20 seconds for wallet to respond
+                start_time = time.time()
+                
+                while time.time() - start_time < response_timeout:
+                    try:
+                        response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+                        message = json.loads(response)
+                        
+                        if message[0] == "EVENT":
+                            event_data = message[2]
+                            
+                            # Check if this is a response from our wallet
+                            if event_data.get('kind') == 23195 and event_data.get('pubkey') == wallet_pubkey:
+                                logging.info(f"[NWC] Received wallet payment response")
+                                
+                                # For now, return mock success since we need proper NIP-47 event creation
+                                # TODO: Decrypt the response and parse the actual payment result
+                                return {
+                                    'success': True,
+                                    'preimage': 'mock_preimage_test123'
+                                }
+                        
+                        elif message[0] == "EOSE":
+                            logging.info(f"[NWC] End of stored events reached")
+                            
+                        elif message[0] == "NOTICE":
+                            logging.warning(f"[NWC] Relay notice: {message[1]}")
+                            
+                    except asyncio.TimeoutError:
+                        continue
+                    except json.JSONDecodeError:
+                        logging.warning(f"[NWC] Invalid JSON received from relay")
+                        continue
+                
+                # Timeout waiting for response
+                logging.error(f"[NWC] Timeout waiting for wallet response")
                 return {
-                    'success': True,
-                    'preimage': 'mock_preimage_12345'
+                    'success': False,
+                    'error': 'Wallet timeout - payment may still be processing'
                 }
                 
         except Exception as e:
-            logging.error(f"[NWC] Error forwarding payment: {e}")
+            logging.error(f"[NWC] Error forwarding payment to wallet: {e}")
             return {
                 'success': False,
-                'error_code': 'NETWORK_ERROR'
+                'error': f'Wallet communication error: {str(e)}'
             }
 
     def handle_connected_session(self, session):
@@ -416,6 +483,10 @@ class Server:
                             # Generate Lightning invoice FIRST (before sending READY)
                             logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
                             
+                            # Fix: Import asyncio at proper scope
+                            import asyncio
+                            
+                            # Generate Lightning invoice
                             invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
                                 zap_data['lnaddr'], 
                                 zap_data['amount_sats'], 
@@ -423,52 +494,68 @@ class Server:
                             ))
                             
                             if invoice:
-                                # Store zap context for future NWC payment step
-                                session.zap_kind9734_note = zap_note_json
-                                session.zap_lightning_invoice = invoice
-                                session.zap_nwc_relay = zap_data.get('nwc_relay')
+                                # Create successful response
+                                response_data = {
+                                    "success": True,
+                                    "invoice": invoice,
+                                    "amount_sats": zap_data['amount_sats'],
+                                    "recipient": zap_data['lnaddr']
+                                }
                                 
-                                # NOW send READY (server ready to send invoice)
-                                logging.info("[ZAP] Invoice generated successfully, sending READY")
+                                response_json = json.dumps(response_data)
+                                compressed_response = compress_nostr_data(response_json)
+                                
+                                # Send server READY (server ready to send invoice)
                                 if self.core.send_ready(session):
                                     logging.info("[ZAP] Sent READY, waiting for client READY")
+                                    
+                                    # Wait for client READY (client ready to receive invoice)
                                     if self.core.wait_for_ready(session):
-                                        logging.info("[ZAP] Received client READY, sending invoice response")
+                                        logging.info("[ZAP] Client READY received, sending Lightning invoice")
                                         
-                                        # Create invoice response
-                                        invoice_response = json.dumps({
-                                            "success": True,
-                                            "invoice": invoice,
-                                            "amount_sats": zap_data['amount_sats'],
-                                            "message": "Lightning invoice generated successfully"
-                                        })
-                                        
-                                        compressed_response = compress_nostr_data(invoice_response)
-                                        
-                                        # Send invoice response back to client
+                                        # Send Lightning invoice using proper HAMSTR response method
                                         if self.core.send_response(session, compressed_response):
-                                            logging.info(f"[ZAP] Lightning invoice sent to client successfully")
+                                            logging.info("[ZAP] Lightning invoice sent successfully")
+                                            
+                                            # PHASE 2 CONTINUATION: Wait for client READY for NWC payment phase
+                                            logging.info("[ZAP] Waiting for client READY for NWC payment phase")
+                                            
+                                            if self.core.wait_for_ready(session):
+                                                logging.info("[ZAP] Client READY received for NWC payment, sending server READY")
+                                                
+                                                # Send server READY (server ready to receive NWC command)
+                                                if self.core.send_ready(session):
+                                                    logging.info("[ZAP] Server READY sent for NWC payment phase")
+                                                    logging.info("[ZAP] Session continuing to NWC payment handler...")
+                                                    # Session continues - NWC_PAYMENT_REQUEST handler will take over
+                                                else:
+                                                    logging.error("[ZAP] Failed to send server READY for NWC phase")
+                                            else:
+                                                logging.error("[ZAP] Client not ready for NWC payment phase")
                                         else:
-                                            logging.error(f"[ZAP] Failed to send invoice response")
+                                            logging.error("[ZAP] Failed to send Lightning invoice")
                                     else:
-                                        logging.error("[ZAP] Did not receive READY message from client")
+                                        logging.error("[ZAP] Client not ready to receive invoice")
                                 else:
-                                    logging.error("[ZAP] Failed to send READY")
+                                    logging.error("[ZAP] Failed to send READY for invoice response")
+                                    
                             else:
-                                # Invoice generation failed - still follow READY pattern
+                                # Invoice generation failed
                                 logging.error(f"[ZAP] Invoice generation failed: {error}")
+                                
                                 if self.core.send_ready(session):
                                     if self.core.wait_for_ready(session):
                                         error_response = json.dumps({
                                             "success": False,
-                                            "error": "INVOICE_GENERATION_ERROR",
-                                            "message": f"Failed to generate Lightning invoice: {error}"
+                                            "error": "INVOICE_ERROR",
+                                            "message": f"Failed to generate invoice: {error}"
                                         })
                                         compressed_error = compress_nostr_data(error_response)
                                         self.core.send_response(session, compressed_error)
                         else:
                             # Zap note parsing failed
-                            logging.error(f"[ZAP] Failed to parse kind 9734 zap note")
+                            logging.error("[ZAP] Failed to parse kind 9734 zap note")
+                            
                             if self.core.send_ready(session):
                                 if self.core.wait_for_ready(session):
                                     error_response = json.dumps({
@@ -493,11 +580,11 @@ class Server:
                                 })
                                 compressed_error = compress_nostr_data(error_response)
                                 self.core.send_response(session, compressed_error)
-
+                                
             elif msg_type == MessageType.NWC_PAYMENT_REQUEST:
                 logging.info(f"[NWC] Received NWC_PAYMENT_REQUEST using proper packet system")
                 
-                # Use the same pattern as NOTE handling
+                # Use the same pattern as ZAP handling
                 seq_num, total_packets, content = self.parse_note_packet(message)
                 session.received_packets[seq_num] = content
                 self.core.send_ack(session, seq_num)
@@ -506,37 +593,131 @@ class Server:
                 
                 # Check if we have all packets
                 if len(session.received_packets) == total_packets:
-                    logging.info("All NWC payment packets received, processing")
+                    logging.info("All NWC payment packets received, waiting for DONE from client")
                     
-                    # Reassemble the NWC command
-                    nwc_command = self.reassemble_note(session.received_packets)
+                    # Wait for DONE message (like ZAP pattern)
+                    done_received = False
+                    start_time = time.time()
+                    timeout = config.CONNECTION_TIMEOUT
                     
+                    while time.time() - start_time < timeout and not done_received:
+                        source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
+                        if msg_type == MessageType.DONE:
+                            logging.info("[NWC] Received DONE from client, sending DONE_ACK")
+                            # Send DONE_ACK
+                            self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
+                            done_received = True
+                            break
+                    
+                    if not done_received:
+                        logging.error("[NWC] Timeout waiting for DONE from client")
+                        continue
+                    
+                    # Now process the NWC payment command
                     try:
-                        logging.info(f"[NWC] Processing payment command")
+                        # Reassemble and decompress the NWC command
+                        compressed_command = self.reassemble_note(session.received_packets)
+                        nwc_command = decompress_nostr_data(compressed_command)
                         
-                        # For now, just send a mock success response
-                        response_message = "NWC_PAYMENT_SUCCESS"
-                        success = self.core.send_single_packet(
-                            session, 0, 0,
-                            response_message.encode(),
-                            MessageType.RESPONSE
-                        )
+                        logging.info(f"[NWC] Successfully received NWC command")
                         
-                        if success:
-                            logging.info(f"[NWC] Sent payment response to client")
+                        # Parse the NWC command format: "NWC:encrypted_command:wallet_pubkey:relay"
+                        nwc_data = self.parse_nwc_command(nwc_command)
                         
-                        # Clear received packets for next operation
+                        if nwc_data:
+                            # Send server READY (server ready to send payment response)
+                            if self.core.send_ready(session):
+                                logging.info("[NWC] Sent READY, waiting for client READY")
+                                
+                                # Wait for client READY (client ready to receive payment response)
+                                if self.core.wait_for_ready(session):
+                                    logging.info("[NWC] Client READY received, forwarding payment to wallet")
+                                    
+                                    # Forward payment to NWC wallet (async operation)
+                                    try:
+                                        import asyncio
+                                        
+                                        # Run the async payment forwarding
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        try:
+                                            payment_result = loop.run_until_complete(
+                                                self.forward_nwc_payment(
+                                                    nwc_data['encrypted_command'],
+                                                    nwc_data['wallet_pubkey'],
+                                                    nwc_data['relay']
+                                                )
+                                            )
+                                        finally:
+                                            loop.close()
+                                        
+                                        # Send payment result back to client
+                                        response_message = json.dumps(payment_result).encode()
+                                        
+                                        success = self.core.send_single_packet(
+                                            session, 0, 0,
+                                            response_message,
+                                            MessageType.NWC_PAYMENT_RESPONSE
+                                        )
+                                        
+                                        if success:
+                                            if payment_result.get("success"):
+                                                logging.info(f"[NWC] ⚡ Payment successful - sent response to client")
+                                            else:
+                                                logging.error(f"[NWC] Payment failed: {payment_result.get('error', 'Unknown error')}")
+                                        else:
+                                            logging.error(f"[NWC] Failed to send payment response to client")
+                                            
+                                    except Exception as e:
+                                        logging.error(f"[NWC] Error processing payment: {e}")
+                                        # Send error response
+                                        error_response = json.dumps({
+                                            "success": False,
+                                            "error": f"Payment processing error: {str(e)}"
+                                        }).encode()
+                                        
+                                        self.core.send_single_packet(
+                                            session, 0, 0,
+                                            error_response,
+                                            MessageType.NWC_PAYMENT_RESPONSE
+                                        )
+                                else:
+                                    logging.error("[NWC] Client not ready to receive payment response")
+                            else:
+                                logging.error("[NWC] Failed to send READY for payment response")
+                        else:
+                            logging.error("[NWC] Failed to parse NWC command")
+                            # Send error response
+                            error_response = json.dumps({
+                                "success": False,
+                                "error": "Invalid NWC command format"
+                            }).encode()
+                            
+                            if self.core.send_ready(session) and self.core.wait_for_ready(session):
+                                self.core.send_single_packet(
+                                    session, 0, 0,
+                                    error_response,
+                                    MessageType.NWC_PAYMENT_RESPONSE
+                                )
+                        
+                        # Clear received packets
                         session.received_packets.clear()
                         
                     except Exception as e:
-                        logging.error(f"[NWC] Error processing payment: {e}")
+                        logging.error(f"[NWC] Error processing NWC command: {e}")
                         # Send error response
-                        error_message = "NWC_PAYMENT_ERROR"
-                        self.core.send_single_packet(
-                            session, 0, 0,
-                            error_message.encode(),
-                            MessageType.RESPONSE
-                        )
+                        error_response = json.dumps({
+                            "success": False,
+                            "error": f"Processing error: {str(e)}"
+                        }).encode()
+                        
+                        if self.core.send_ready(session) and self.core.wait_for_ready(session):
+                            self.core.send_single_packet(
+                                session, 0, 0,
+                                error_response,
+                                MessageType.NWC_PAYMENT_RESPONSE
+                            )
+
             elif msg_type == MessageType.DONE:
                 logging.info("Received DONE from client")
                 if is_note:

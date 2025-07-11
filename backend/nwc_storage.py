@@ -173,58 +173,69 @@ class NWCStorage:
         return None
 
     def test_nwc_connection(self, nwc_uri):
-        """
-        Test NWC connection validity with actual wallet communication.
-        This performs real NIP-47 connection testing during online setup phase.
-        """
-        try:
-            # First validate URI format
-            connection_data = self.parse_nwc_uri(nwc_uri)
-            
-            logging.info(f"[NWC] Testing connection to wallet: {connection_data['wallet_pubkey'][:8]}...")
-            socketio_logger.info(f"[NWC] Testing connection to wallet via {connection_data['relay']}")
-            
-            # If NWC client is available, perform real connection test
-            if NWCClient:
-                try:
-                    # Create NWC client and test connection
-                    nwc_client = NWCClient(connection_data)
-                    
-                    # Run async connection test
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+            """
+            Test NWC connection validity with actual wallet communication.
+            This performs real NIP-47 connection testing during online setup phase.
+            """
+            try:
+                # First validate URI format
+                connection_data = self.parse_nwc_uri(nwc_uri)
+                
+                logging.info(f"[NWC] Testing connection to wallet: {connection_data['wallet_pubkey'][:8]}...")
+                socketio_logger.info(f"[NWC] Testing connection to wallet via {connection_data['relay']}")
+                
+                # If NWC client is available, perform real connection test
+                if NWCClient:
                     try:
-                        result = loop.run_until_complete(nwc_client.test_connection())
-                        return result
-                    finally:
-                        loop.close()
+                        # Create NWC client and test connection
+                        nwc_client = NWCClient(connection_data)
                         
-                except Exception as e:
-                    logging.error(f"[NWC] Real connection test failed: {e}")
-                    socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
+                        # Run async connection test
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            result = loop.run_until_complete(nwc_client.test_connection())
+                            
+                            # If successful, enhance the result with clean messaging
+                            if result.get('success'):
+                                socketio_logger.info(f"[NWC] ✅ Connection successful! You may now go offline.")
+                                result['ready_for_offline'] = True
+                                result['message'] = "✅ Connection successful! You may now go offline."
+                            else:
+                                socketio_logger.error(f"[NWC] ❌ Connection failed: {result.get('error', 'Unknown error')}")
+                                
+                            return result
+                            
+                        finally:
+                            loop.close()
+                            
+                    except Exception as e:
+                        logging.error(f"[NWC] Real connection test failed: {e}")
+                        socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
+                        return {
+                            'success': False,
+                            'error': f'Connection test failed: {str(e)}'
+                        }
+                else:
+                    # Fallback to basic format validation only
+                    logging.info(f"[NWC] NWC client not available - format validation only")
+                    socketio_logger.info(f"[NWC] Format validated - Relay: {connection_data['relay']}")
+                    
                     return {
-                        'success': False,
-                        'error': f'Connection test failed: {str(e)}'
+                        'success': True,
+                        'relay': connection_data['relay'],
+                        'wallet_pubkey': connection_data['wallet_pubkey'][:8] + '...',
+                        'note': 'Format validation only - full connection test not available',
+                        'ready_for_offline': False
                     }
-            else:
-                # Fallback to basic format validation only
-                logging.info(f"[NWC] NWC client not available - format validation only")
-                socketio_logger.info(f"[NWC] Format validated - Relay: {connection_data['relay']}")
-                
+                    
+            except Exception as e:
+                logging.error(f"NWC connection test failed: {str(e)}")
+                socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
                 return {
-                    'success': True,
-                    'relay': connection_data['relay'],
-                    'wallet_pubkey': connection_data['wallet_pubkey'][:8] + '...',
-                    'note': 'Format validation only - full connection test not available'
+                    'success': False,
+                    'error': str(e)
                 }
-                
-        except Exception as e:
-            logging.error(f"NWC connection test failed: {str(e)}")
-            socketio_logger.error(f"[NWC] Connection test failed: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
 
     def create_nwc_client(self):
         """

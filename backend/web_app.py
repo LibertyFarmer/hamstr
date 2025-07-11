@@ -761,8 +761,25 @@ def test_nwc_connection():
         if not nwc_uri:
             return jsonify({'success': False, 'message': 'NWC URI is required'}), 400
         
-        # Test the connection format and basic validation
+        # Test the connection with real wallet communication
         test_result = nwc_storage.test_nwc_connection(nwc_uri)
+        
+        # If test is successful, store the connection
+        if test_result.get('success'):
+            socketio_logger.info(f"[NWC] Connection test passed, storing connection")
+            
+            store_success = nwc_storage.store_nwc_connection(nwc_uri)
+            if store_success:
+                test_result['stored'] = True
+                test_result['message'] = test_result.get('message', 'Connected!') + ' Connection stored securely.'
+                socketio_logger.info(f"[NWC] Connection stored successfully")
+            else:
+                test_result['stored'] = False
+                test_result['message'] = 'Connection successful but failed to store securely'
+                socketio_logger.error(f"[NWC] Failed to store connection")
+        else:
+            socketio_logger.error(f"[NWC] Connection test failed, not storing")
+            test_result['stored'] = False
         
         return jsonify(test_result)
         
@@ -770,7 +787,8 @@ def test_nwc_connection():
         socketio_logger.error(f"[NWC] Error testing connection: {e}")
         return jsonify({
             'success': False,
-            'message': f'Connection test failed: {str(e)}'
+            'message': f'Connection test failed: {str(e)}',
+            'stored': False
         }), 500
 
 @app.route('/api/send_zap', methods=['POST'])
@@ -795,7 +813,7 @@ def send_zap():
             "message": "Invalid request format"
         }), 400
 
-    # Extract zap data (new format)
+    # Extract zap data
     recipient_lud16 = data.get('recipient_lud16', '')
     amount_sats = data.get('amount_sats', 0)
     message = data.get('message', '')
@@ -876,7 +894,7 @@ def send_zap():
         # Convert to JSON and compress for transmission
         zap_note_json = signed_event.as_json()
         compressed_note = compress_nostr_data(zap_note_json)
-        
+     
         socketio_logger.info(f"[CLIENT] Preparing to send kind 9734 zap note: {amount_sats} sats to {recipient_lud16}")
         
         # Use existing radio infrastructure
@@ -885,6 +903,7 @@ def send_zap():
         
         def radio_operation():
             nonlocal result_container
+         #   import json
             try:
                 client = Client(BASE_DIR)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
@@ -893,7 +912,8 @@ def send_zap():
                 
                 session = client.core.connect(server_callsign)
                 if session:
-                    # Step 1: Send zap note packets + DONE (like send_message does)
+                    # PHASE 1: KIND 9734 → LIGHTNING INVOICE (working flow)
+                    # Step 1: Send zap note packets + DONE
                     success = client.core.message_processor.send_message(session, compressed_note, MessageType.ZAP_KIND9734_REQUEST)
                     
                     if success:
@@ -907,26 +927,134 @@ def send_zap():
                             if client.core.send_ready(session):
                                 socketio_logger.info("[CLIENT] READY sent, waiting for invoice response")
                                 
-                                # Step 4: Wait for invoice response
+                                # Step 4: Wait for invoice response (ORIGINAL WORKING METHOD)
                                 response = client.core.receive_response(session)
                                 if response:
                                     # Decompress and show the invoice
                                     decompressed_response = decompress_nostr_data(response)
                                     socketio_logger.info(f"[CLIENT] Received invoice response: {decompressed_response}")
-                                    
+                                   
                                     # Parse and show just the invoice
                                     try:
                                         invoice_data = json.loads(decompressed_response)
                                         if invoice_data.get('success') and 'invoice' in invoice_data:
-                                            socketio_logger.info(f"[CLIENT] Lightning Invoice: {invoice_data['invoice']}")
-                                    except:
-                                        pass
+                                            lightning_invoice = invoice_data['invoice']
+                                            socketio_logger.info(f"[CLIENT] Lightning Invoice: {lightning_invoice}")
+                                            
+                                            # PHASE 2B: CREATE NWC PAYMENT COMMAND
+                                            socketio_logger.info(f"[CLIENT] Creating encrypted NWC payment command")
+                                            
+                                            # Import the NWC command creation function
+                                            from nostr import create_nwc_payment_command
+                                            
+                                            # Create encrypted payment command
+                                            nwc_command = create_nwc_payment_command(nwc_storage, lightning_invoice)
+                                            
+                                            if nwc_command:
+                                                # PHASE 2C: SEND NWC COMMAND VIA RADIO
+                                                socketio_logger.info(f"[CLIENT] Sending NWC payment command via radio")
+                                                
+                                                # Compress the NWC command for transmission
+                                                compressed_nwc_command = compress_nostr_data(nwc_command)
+                                                
+                                                # Step 6: Send client READY (client ready to send NWC command)
+                                                if client.core.send_ready(session):
+                                                    socketio_logger.info("[CLIENT] Sent READY for NWC command transmission")
+                                                    
+                                                    # Step 7: Wait for server READY (server ready to receive NWC command)
+                                                    if client.core.wait_for_specific_message(session, MessageType.READY):
+                                                        socketio_logger.info("[CLIENT] Server READY received, sending NWC command")
+                                                        
+                                                        # Step 8: Send encrypted NWC payment command
+                                                        nwc_success = client.core.message_processor.send_message(
+                                                            session, compressed_nwc_command, MessageType.NWC_PAYMENT_REQUEST
+                                                        )
+                                                        
+                                                        if nwc_success:
+                                                            socketio_logger.info("[CLIENT] NWC command sent, waiting for payment response")
+                                                            
+                                                            # Wait for payment response from server
+                                                            payment_response = client.core.receive_response(session)
+                                                            if payment_response:
+                                                                try:
+                                                                    # Parse payment response
+                                                                    decompressed_payment = decompress_nostr_data(payment_response)
+                                                                    payment_result = json.loads(decompressed_payment)
+                                                                    
+                                                                    if payment_result.get("success"):
+                                                                        socketio_logger.info("[CLIENT] ⚡ Zap payment successful!")
+                                                                        result_container[0] = {
+                                                                            "success": True,
+                                                                            "message": "⚡ Zap sent successfully!",
+                                                                            "preimage": payment_result.get("preimage")
+                                                                        }
+                                                                    else:
+                                                                        error_msg = payment_result.get("error", "Payment failed")
+                                                                        socketio_logger.error(f"[CLIENT] Payment failed: {error_msg}")
+                                                                        result_container[0] = {
+                                                                            "success": False,
+                                                                            "message": f"Payment failed: {error_msg}"
+                                                                        }
+                                                                        
+                                                                except Exception as e:
+                                                                    socketio_logger.error(f"[CLIENT] Error parsing payment response: {e}")
+                                                                    result_container[0] = {
+                                                                        "success": False,
+                                                                        "message": "Error processing payment response"
+                                                                    }
+                                                            else:
+                                                                socketio_logger.error("[CLIENT] No payment response received")
+                                                                result_container[0] = {
+                                                                    "success": False,
+                                                                    "message": "Payment timeout - no response from wallet"
+                                                                }
+                                                        else:
+                                                            socketio_logger.error("[CLIENT] Failed to send NWC command")
+                                                            result_container[0] = {
+                                                                "success": False,
+                                                                "message": "Failed to send payment command"
+                                                            }
+                                                    else:
+                                                        socketio_logger.error("[CLIENT] Server not ready for NWC command")
+                                                        result_container[0] = {
+                                                            "success": False,
+                                                            "message": "Server not ready for payment"
+                                                        }
+                                                else:
+                                                    socketio_logger.error("[CLIENT] Failed to send READY for NWC command")
+                                                    result_container[0] = {
+                                                        "success": False,
+                                                        "message": "Failed to initiate payment sequence"
+                                                    }
+                                            else:
+                                                socketio_logger.error(f"[CLIENT] Failed to create NWC payment command")
+                                                result_container[0] = {
+                                                    "success": False, 
+                                                    "message": "Failed to create payment command"
+                                                }
+                                        else:
+                                            error_msg = invoice_data.get("message", "Invoice generation failed")
+                                            result_container[0] = {
+                                                "success": False,
+                                                "message": f"Invoice generation failed: {error_msg}"
+                                            }
+                                    except Exception as e:
+                                        socketio_logger.error(f"[CLIENT] Error parsing invoice: {e}")
+                                        result_container[0] = {
+                                            "success": False,
+                                            "message": f"Error parsing invoice: {str(e)}"
+                                        }
+                                else:
+                                    result_container[0] = {
+                                        "success": False,
+                                        "message": "No response received from server"
+                                    }
                             else:
                                 socketio_logger.error("[CLIENT] Failed to send READY")
-                                result_container[0] = {"success": False, "message": "Failed to send READY"}
+                                result_container[0] = {"success": False, "message": "Failed to respond to server"}
                         else:
                             socketio_logger.error("[CLIENT] Did not receive READY from server")
-                            result_container[0] = {"success": False, "message": "Server did not send READY"}
+                            result_container[0] = {"success": False, "message": "Server not ready"}
                     else:
                         socketio_logger.error("[CLIENT] Failed to send zap packets")
                         result_container[0] = {"success": False, "message": "Failed to send zap packets"}
@@ -940,16 +1068,6 @@ def send_zap():
                 socketio_logger.error(f"[CLIENT] Radio operation error: {e}")
                 result_container[0] = {"success": False, "message": f"Radio error: {str(e)}"}
         
-        # Execute radio operation in thread
-        radio_thread = threading.Thread(target=radio_operation)
-        radio_thread.start()
-        radio_thread.join(timeout=120)  # Longer timeout for multi-step process
-        
-        if radio_thread.is_alive():
-            result_container[0] = {"success": False, "message": "Radio operation timeout"}
-        
-        return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
-        
     except Exception as e:
         socketio_logger.error(f"[CLIENT] Error creating zap note: {e}")
         return jsonify({
@@ -958,6 +1076,16 @@ def send_zap():
         }), 500
     finally:
         radio_operation_in_progress = False
+
+        radio_thread = threading.Thread(target=radio_operation)
+    radio_thread.start()
+    radio_thread.join(timeout=180)  # Or whatever timeout you had
+
+    if radio_thread.is_alive():
+        result_container[0] = {"success": False, "message": "Radio operation timeout"}
+
+    return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
+        
 # Static file routes
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
