@@ -903,7 +903,6 @@ def send_zap():
         
         def radio_operation():
             nonlocal result_container
-         #   import json
             try:
                 client = Client(BASE_DIR)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
@@ -933,7 +932,7 @@ def send_zap():
                                     # Decompress and show the invoice
                                     decompressed_response = decompress_nostr_data(response)
                                     socketio_logger.info(f"[CLIENT] Received invoice response: {decompressed_response}")
-                                   
+                                
                                     # Parse and show just the invoice
                                     try:
                                         invoice_data = json.loads(decompressed_response)
@@ -974,7 +973,18 @@ def send_zap():
                                                             socketio_logger.info("[CLIENT] NWC command sent, waiting for payment response")
                                                             
                                                             # Wait for payment response from server
-                                                            payment_response = client.core.receive_response(session)
+                                                            if client.core.wait_for_specific_message(session, MessageType.READY, timeout=30):
+                                                                socketio_logger.info("[CLIENT] Server READY received for payment response")
+                                                                if client.core.send_ready(session):
+                                                                    socketio_logger.info("[CLIENT] Sent READY for payment response")
+                                                                    payment_response = client.core.receive_response(session)
+                                                                else:
+                                                                    payment_response = None
+                                                                    socketio_logger.error("[CLIENT] Failed to send READY for payment response")
+                                                            else:
+                                                                payment_response = None  
+                                                                socketio_logger.error("[CLIENT] Server not ready for payment response")
+                                                            
                                                             if payment_response:
                                                                 try:
                                                                     # Parse payment response
@@ -1059,6 +1069,7 @@ def send_zap():
                         socketio_logger.error("[CLIENT] Failed to send zap packets")
                         result_container[0] = {"success": False, "message": "Failed to send zap packets"}
                     
+                    # Always disconnect at the end
                     client.core.disconnect(session)
                 else:
                     socketio_logger.error("[CLIENT] Failed to connect to server")

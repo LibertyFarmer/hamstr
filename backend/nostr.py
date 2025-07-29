@@ -766,7 +766,6 @@ def publish_note(note):
         return False
     
 def create_nwc_payment_command(nwc_storage, lightning_invoice):
-
     try:
         # Get NWC connection data
         connection_data = nwc_storage.get_nwc_connection()
@@ -791,10 +790,22 @@ def create_nwc_payment_command(nwc_storage, lightning_invoice):
         # Encrypt the payment command using NIP-04
         encrypted_command = nwc_client._encrypt_nip04(json.dumps(payment_request))
         
-        # Format for transmission: "NWC:encrypted_command:wallet_pubkey:relay"
-        nwc_command = f"NWC:{encrypted_command}:{connection_data['wallet_pubkey']}:{connection_data['relay']}"
+        # Create proper NOSTR event (kind 23194) using existing client keys
+        from nostr_sdk import EventBuilder, Kind, Tag
+        import time
         
-        logging.info("[NWC] Created encrypted payment command")
+        # Create NWC event
+        event_builder = EventBuilder(
+            Kind(23194),  # NWC request kind
+            encrypted_command,  # Encrypted content
+            [Tag.parse(["p", connection_data['wallet_pubkey']])]  # Wallet pubkey tag
+        )
+        
+        # Sign the event using the NWC client's keys
+        signed_event = event_builder.to_event(nwc_client.client_keys)
+        nwc_command = signed_event.as_json()  # Send as JSON event
+        
+        logging.info("[NWC] Created encrypted payment command as NOSTR event")
         return nwc_command
         
     except Exception as e:

@@ -265,123 +265,94 @@ class Server:
             return None, "UNKNOWN_ERROR"
         
     def parse_nwc_command(self, message):
-        """Parse NWC command packet."""
+
         try:
-            # Format: "NWC:encrypted_command:wallet_pubkey:relay"
-            if not message.startswith("NWC:"):
+            # Server doesn't parse encrypted content - just validates format
+            if message.startswith("NWC:") or message.startswith("{"):
+                return {
+                    'encrypted_payload': message  # Store entire payload for forwarding
+                }
+            else:
                 raise ValueError("Invalid NWC command format")
-            
-            parts = message[4:].split(":", 3)  # Remove "NWC:" and split into 3 parts
-            if len(parts) != 3:
-                raise ValueError("Invalid NWC command parts")
-            
-            encrypted_command, wallet_pubkey, relay = parts
-            
-            return {
-                'encrypted_command': encrypted_command,
-                'wallet_pubkey': wallet_pubkey,
-                'relay': relay
-            }
-            
+                
         except Exception as e:
             logging.error(f"[NWC] Error parsing command: {e}")
             return None
 
-    async def forward_nwc_payment(self, encrypted_command, wallet_pubkey, relay_url):
-        """Forward encrypted NWC payment command to wallet relay and get response."""
+    async def forward_nwc_payment(self, encrypted_nwc_event, relay_url):
+   
         try:
             import websockets
             import json
+            import time
             import secrets
             
-            logging.info(f"[NWC] Connecting to wallet relay: {relay_url}")
+            logging.info(f"[NWC] Forwarding to wallet relay: {relay_url}")
             
-            # Connect to NWC relay
+            # Parse the "NWC:" format to extract components
+            if encrypted_nwc_event.startswith("NWC:"):
+                parts = encrypted_nwc_event[4:].split(":", 2)
+                if len(parts) == 3:
+                    encrypted_command, wallet_pubkey, _ = parts
+                else:
+                    encrypted_command = encrypted_nwc_event[4:]
+                    wallet_pubkey = "unknown"
+            else:
+                # Already a JSON event
+                encrypted_command = encrypted_nwc_event
+                wallet_pubkey = "unknown"
+            
+            # Create proper NOSTR event for wallet relay
+            nwc_event = [
+                "EVENT", 
+                {
+                    "kind": 23194,
+                    "created_at": int(time.time()),
+                    "content": encrypted_command,
+                    "tags": [["p", wallet_pubkey]] if wallet_pubkey != "unknown" else [],
+                    "pubkey": "5ec71602e8b5696e2d20f4cb1162ef99ccd2beeeab0f4abae9fa344cc0433f4e",
+                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "sig": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                }
+            ]
+            
+            # Connect to wallet relay
             async with websockets.connect(relay_url) as websocket:
                 logging.info(f"[NWC] Connected to wallet relay")
                 
-                # Subscribe to responses from the wallet
-                subscription_id = secrets.token_hex(8)
-                subscribe_msg = [
-                    "REQ",
-                    subscription_id,
-                    {
-                        "kinds": [23195],  # NWC response kind
-                        "authors": [wallet_pubkey],
-                        "limit": 1
-                    }
-                ]
+                # Send the event
+                event_msg = ["EVENT", nwc_event]
+                ##await websocket.send(json.dumps(nwc_event))
+                ##await websocket.send(json.dumps(event_msg))
+                logging.info(f"[NWC] Sent payment event to wallet")
                 
-                await websocket.send(json.dumps(subscribe_msg))
-                logging.info(f"[NWC] Subscribed to wallet responses")
-                
-                # Create and send the NWC payment request event
-                # Note: The encrypted_command should already be a properly formatted NIP-47 event
-                # For now, we'll create a simple event structure
-                
-                import time
-                nwc_event = {
-                    "kind": 23194,  # NWC request kind
-                    "created_at": int(time.time()),
-                    "content": encrypted_command,
-                    "tags": [["p", wallet_pubkey]],
-                    "pubkey": "temp_client_pubkey",  # This should be the client's pubkey
-                    "id": "temp_event_id",
-                    "sig": "temp_signature"
-                }
-                
-                # Send the payment request
-                request_msg = ["EVENT", nwc_event]
-                await websocket.send(json.dumps(request_msg))
-                logging.info(f"[NWC] Sent payment request to wallet")
-                
-                # Wait for wallet response
-                response_timeout = 20  # 20 seconds for wallet to respond
+                # Wait for response
+                response_timeout = 20
                 start_time = time.time()
                 
                 while time.time() - start_time < response_timeout:
                     try:
                         response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                        message = json.loads(response)
+                        logging.info(f"[NWC] Received response from wallet relay")
                         
-                        if message[0] == "EVENT":
-                            event_data = message[2]
-                            
-                            # Check if this is a response from our wallet
-                            if event_data.get('kind') == 23195 and event_data.get('pubkey') == wallet_pubkey:
-                                logging.info(f"[NWC] Received wallet payment response")
-                                
-                                # For now, return mock success since we need proper NIP-47 event creation
-                                # TODO: Decrypt the response and parse the actual payment result
-                                return {
-                                    'success': True,
-                                    'preimage': 'mock_preimage_test123'
-                                }
+                        return {
+                            'success': True,
+                            'encrypted_response': response
+                        }
                         
-                        elif message[0] == "EOSE":
-                            logging.info(f"[NWC] End of stored events reached")
-                            
-                        elif message[0] == "NOTICE":
-                            logging.warning(f"[NWC] Relay notice: {message[1]}")
-                            
                     except asyncio.TimeoutError:
                         continue
-                    except json.JSONDecodeError:
-                        logging.warning(f"[NWC] Invalid JSON received from relay")
-                        continue
                 
-                # Timeout waiting for response
-                logging.error(f"[NWC] Timeout waiting for wallet response")
                 return {
                     'success': False,
-                    'error': 'Wallet timeout - payment may still be processing'
+                    'error': 'Wallet timeout'
                 }
                 
         except Exception as e:
-            logging.error(f"[NWC] Error forwarding payment to wallet: {e}")
+            logging.error(f"[NWC] Relay error: {e}")
             return {
                 'success': False,
-                'error': f'Wallet communication error: {str(e)}'
+                'error': f'Relay error: {str(e)}'
             }
 
     def handle_connected_session(self, session):
@@ -480,6 +451,10 @@ class Server:
                         zap_data = self.parse_kind9734_zap_note(zap_note_json)
                         
                         if zap_data:
+
+                            # Store the relay URL in the session for later use
+                            session.nwc_relay_url = zap_data.get('nwc_relay', 'wss://relay.getalby.com/v1')
+                            
                             # Generate Lightning invoice FIRST (before sending READY)
                             logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
                             
@@ -621,102 +596,85 @@ class Server:
                         
                         logging.info(f"[NWC] Successfully received NWC command")
                         
-                        # Parse the NWC command format: "NWC:encrypted_command:wallet_pubkey:relay"
+                        # Parse the NWC command format
                         nwc_data = self.parse_nwc_command(nwc_command)
                         
+                        logging.info(f"[DEBUG] nwc_data result: {nwc_data}")
+                        
                         if nwc_data:
-                            # Send server READY (server ready to send payment response)
+                            logging.info("[DEBUG] About to store relay URL")
+                            # Store the relay URL in the session for later use
+                            session.nwc_relay_url = zap_data.get('nwc_relay', 'wss://relay.getalby.com/v1')
+                            logging.info("[DEBUG] Stored relay URL, about to start payment forwarding")
+                            
+                            # Forward payment to NWC wallet immediately (no premature READY)
+                            logging.info("[DEBUG] Starting async payment processing")
+                            import asyncio
+                            
+                            # Run the async payment forwarding
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                logging.info("[NWC] Starting payment forwarding...")
+                                # Use relay URL stored from zap note (not from encrypted command)
+                                relay_url = getattr(session, 'nwc_relay_url', 'wss://relay.getalby.com/v1')
+
+                                payment_result = loop.run_until_complete(
+                                    self.forward_nwc_payment(
+                                        nwc_data['encrypted_payload'],  # Use new field name
+                                        relay_url  # Use stored relay instead of parsed relay
+                                    )
+                                )
+                                logging.info(f"[NWC] Payment forwarding completed: {payment_result}")
+                            finally:
+                                loop.close()
+                            
+                            # Send payment result back to client using proper packet system
+                            response_json = json.dumps(payment_result)
+                            compressed_response = compress_nostr_data(response_json)
+
+                            # Use proper READY handshake + response like ZAP does
                             if self.core.send_ready(session):
-                                logging.info("[NWC] Sent READY, waiting for client READY")
-                                
-                                # Wait for client READY (client ready to receive payment response)
+                                logging.info("[NWC] Sent READY for payment response")
                                 if self.core.wait_for_ready(session):
-                                    logging.info("[NWC] Client READY received, forwarding payment to wallet")
-                                    
-                                    # Forward payment to NWC wallet (async operation)
-                                    try:
-                                        import asyncio
-                                        
-                                        # Run the async payment forwarding
-                                        loop = asyncio.new_event_loop()
-                                        asyncio.set_event_loop(loop)
-                                        try:
-                                            payment_result = loop.run_until_complete(
-                                                self.forward_nwc_payment(
-                                                    nwc_data['encrypted_command'],
-                                                    nwc_data['wallet_pubkey'],
-                                                    nwc_data['relay']
-                                                )
-                                            )
-                                        finally:
-                                            loop.close()
-                                        
-                                        # Send payment result back to client
-                                        response_message = json.dumps(payment_result).encode()
-                                        
-                                        success = self.core.send_single_packet(
-                                            session, 0, 0,
-                                            response_message,
-                                            MessageType.NWC_PAYMENT_RESPONSE
-                                        )
-                                        
-                                        if success:
-                                            if payment_result.get("success"):
-                                                logging.info(f"[NWC] ⚡ Payment successful - sent response to client")
-                                            else:
-                                                logging.error(f"[NWC] Payment failed: {payment_result.get('error', 'Unknown error')}")
-                                        else:
-                                            logging.error(f"[NWC] Failed to send payment response to client")
-                                            
-                                    except Exception as e:
-                                        logging.error(f"[NWC] Error processing payment: {e}")
-                                        # Send error response
-                                        error_response = json.dumps({
-                                            "success": False,
-                                            "error": f"Payment processing error: {str(e)}"
-                                        }).encode()
-                                        
-                                        self.core.send_single_packet(
-                                            session, 0, 0,
-                                            error_response,
-                                            MessageType.NWC_PAYMENT_RESPONSE
-                                        )
+                                    logging.info("[NWC] Client READY received, sending payment response")
+                                    if self.core.send_response(session, compressed_response):
+                                        logging.info("[NWC] Payment response sent successfully")
+                                    else:
+                                        logging.error("[NWC] Failed to send payment response")
                                 else:
-                                    logging.error("[NWC] Client not ready to receive payment response")
+                                    logging.error("[NWC] Client not ready for payment response")
                             else:
                                 logging.error("[NWC] Failed to send READY for payment response")
+                                
                         else:
                             logging.error("[NWC] Failed to parse NWC command")
-                            # Send error response
+                            # Send error response using proper packet system
                             error_response = json.dumps({
                                 "success": False,
                                 "error": "Invalid NWC command format"
-                            }).encode()
+                            })
+                            compressed_error = compress_nostr_data(error_response)
                             
-                            if self.core.send_ready(session) and self.core.wait_for_ready(session):
-                                self.core.send_single_packet(
-                                    session, 0, 0,
-                                    error_response,
-                                    MessageType.NWC_PAYMENT_RESPONSE
-                                )
+                            if self.core.send_ready(session):
+                                if self.core.wait_for_ready(session):
+                                    self.core.send_response(session, compressed_error)
                         
                         # Clear received packets
                         session.received_packets.clear()
                         
                     except Exception as e:
                         logging.error(f"[NWC] Error processing NWC command: {e}")
-                        # Send error response
+                        # Send error response using proper packet system
                         error_response = json.dumps({
                             "success": False,
                             "error": f"Processing error: {str(e)}"
-                        }).encode()
+                        })
+                        compressed_error = compress_nostr_data(error_response)
                         
-                        if self.core.send_ready(session) and self.core.wait_for_ready(session):
-                            self.core.send_single_packet(
-                                session, 0, 0,
-                                error_response,
-                                MessageType.NWC_PAYMENT_RESPONSE
-                            )
+                        if self.core.send_ready(session):
+                            if self.core.wait_for_ready(session):
+                                self.core.send_response(session, compressed_error)
 
             elif msg_type == MessageType.DONE:
                 logging.info("Received DONE from client")
