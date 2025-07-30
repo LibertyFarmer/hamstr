@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-HAMSTR Server UI - PySide6 version with modern desktop interface
-"""
 
 import sys
 import threading

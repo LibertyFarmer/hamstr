@@ -779,7 +779,7 @@ def create_nwc_payment_command(nwc_storage, lightning_invoice):
             logging.error("[NWC] Failed to create NWC client")
             return None
         
-        # Create payment request payload
+        # Create payment request payload (NIP-47 format)
         payment_request = {
             "method": "pay_invoice",
             "params": {
@@ -787,25 +787,28 @@ def create_nwc_payment_command(nwc_storage, lightning_invoice):
             }
         }
         
+        # Add unique ID for JSON-RPC
+        import secrets
+        payment_request["id"] = secrets.token_hex(16)
+        
         # Encrypt the payment command using NIP-04
         encrypted_command = nwc_client._encrypt_nip04(json.dumps(payment_request))
         
-        # Create proper NOSTR event (kind 23194) using existing client keys
-        from nostr_sdk import EventBuilder, Kind, Tag
-        import time
+        # Create proper NOSTR event (kind 23194) with proper signing
+        from nostr_sdk import EventBuilder, Kind
         
-        # Create NWC event
+        # Create NWC event with NO tags (NIP-47 standard)
         event_builder = EventBuilder(
-            Kind(23194),  # NWC request kind
-            encrypted_command,  # Encrypted content
-            [Tag.parse(["p", connection_data['wallet_pubkey']])]  # Wallet pubkey tag
+            Kind(23194),
+            encrypted_command,
+            []  # No tags for NIP-47
         )
         
-        # Sign the event using the NWC client's keys
+        # Sign the event using the NWC client's keys (this creates proper ID and signature)
         signed_event = event_builder.to_event(nwc_client.client_keys)
-        nwc_command = signed_event.as_json()  # Send as JSON event
+        nwc_command = signed_event.as_json()  # This should have proper ID and signature
         
-        logging.info("[NWC] Created encrypted payment command as NOSTR event")
+        logging.info("[NWC] Created proper signed NIP-47 payment command")
         return nwc_command
         
     except Exception as e:

@@ -265,22 +265,21 @@ class Server:
             return None, "UNKNOWN_ERROR"
         
     def parse_nwc_command(self, message):
-
         try:
             # Server doesn't parse encrypted content - just validates format
-            if message.startswith("NWC:") or message.startswith("{"):
+            # Accept any non-empty string as valid NWC command
+            if message and len(message.strip()) > 0:
                 return {
                     'encrypted_payload': message  # Store entire payload for forwarding
                 }
             else:
-                raise ValueError("Invalid NWC command format")
+                raise ValueError("Empty NWC command")
                 
         except Exception as e:
             logging.error(f"[NWC] Error parsing command: {e}")
             return None
 
     async def forward_nwc_payment(self, encrypted_nwc_event, relay_url):
-   
         try:
             import websockets
             import json
@@ -289,71 +288,60 @@ class Server:
             
             logging.info(f"[NWC] Forwarding to wallet relay: {relay_url}")
             
-            # Parse the "NWC:" format to extract components
-            if encrypted_nwc_event.startswith("NWC:"):
-                parts = encrypted_nwc_event[4:].split(":", 2)
-                if len(parts) == 3:
-                    encrypted_command, wallet_pubkey, _ = parts
-                else:
-                    encrypted_command = encrypted_nwc_event[4:]
-                    wallet_pubkey = "unknown"
-            else:
-                # Already a JSON event
-                encrypted_command = encrypted_nwc_event
-                wallet_pubkey = "unknown"
+            # Create a minimal unsigned NOSTR event for the relay
+            # The relay will accept unsigned events for NWC
+            nwc_event = {
+                "kind": 23194,
+                "created_at": int(time.time()),
+                "content": encrypted_nwc_event,  # Use the encrypted content as-is
+                "tags": [],
+                "pubkey": "",  # Empty for anonymous
+                "id": "",      # Empty
+                "sig": ""      # Empty
+            }
             
-            # Create proper NOSTR event for wallet relay
-            nwc_event = [
-                "EVENT", 
-                {
-                    "kind": 23194,
-                    "created_at": int(time.time()),
-                    "content": encrypted_command,
-                    "tags": [["p", wallet_pubkey]] if wallet_pubkey != "unknown" else [],
-                    "pubkey": "5ec71602e8b5696e2d20f4cb1162ef99ccd2beeeab0f4abae9fa344cc0433f4e",
-                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "sig": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-                }
-            ]
+            logging.info(f"[NWC] Created minimal event for relay")
             
-            # Connect to wallet relay
+            # Connect to wallet relay and send event
             async with websockets.connect(relay_url) as websocket:
                 logging.info(f"[NWC] Connected to wallet relay")
                 
                 # Send the event
-                event_msg = ["EVENT", nwc_event]
-                ##await websocket.send(json.dumps(nwc_event))
-                ##await websocket.send(json.dumps(event_msg))
+                await websocket.send(json.dumps(["EVENT", nwc_event]))
                 logging.info(f"[NWC] Sent payment event to wallet")
                 
-                # Wait for response
+                # Wait for relay OK response
                 response_timeout = 20
                 start_time = time.time()
                 
                 while time.time() - start_time < response_timeout:
                     try:
-                        response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                        logging.info(f"[NWC] Received response from wallet relay")
+                        response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                        message = json.loads(response)
                         
-                        return {
-                            'success': True,
-                            'encrypted_response': response
-                        }
-                        
+                        if message[0] == "OK":
+                            event_id = message[1]
+                            accepted = message[2]
+                            error_msg = message[3] if len(message) > 3 else ""
+                            
+                            if accepted:
+                                logging.info(f"[NWC] Relay accepted payment request")
+                                return {'success': True, 'message': 'Payment request sent to wallet'}
+                            else:
+                                logging.error(f"[NWC] Relay rejected payment request: {error_msg}")
+                                return {'success': False, 'error': f'Relay error: {error_msg}'}
+                    
                     except asyncio.TimeoutError:
                         continue
+                    except Exception as e:
+                        logging.error(f"[NWC] Error receiving response: {e}")
+                        return {'success': False, 'error': f'Response error: {str(e)}'}
                 
-                return {
-                    'success': False,
-                    'error': 'Wallet timeout'
-                }
+                return {'success': False, 'error': 'Relay timeout'}
                 
         except Exception as e:
-            logging.error(f"[NWC] Relay error: {e}")
-            return {
-                'success': False,
-                'error': f'Relay error: {str(e)}'
-            }
+            logging.error(f"[NWC] Error forwarding payment: {e}")
+            return {'success': False, 'error': str(e)}
 
     def handle_connected_session(self, session):
         logging.info(f"Handling session for {session.remote_callsign}")
