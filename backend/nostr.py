@@ -764,59 +764,65 @@ def publish_note(note):
     except Exception as e:
         logging.error(f"[PUBLISH] Error in publish_note: {e}")
         return False
-    
+
+# Create NWC payment command and send encrypted
+
 def create_nwc_payment_command(nwc_storage, lightning_invoice):
+    """
+    Create NWC payment command using nwc_utils.tryToPayInvoice() directly.
+    """
     try:
         # Get NWC connection data
         connection_data = nwc_storage.get_nwc_connection()
         if not connection_data:
             logging.error("[NWC] No stored NWC connection")
             return None
-        
-        # Create NWC client
-        nwc_client = nwc_storage.create_nwc_client()
-        if not nwc_client:
-            logging.error("[NWC] Failed to create NWC client")
+       
+        # Import nwc_utils functions
+        try:
+            from nwc_utils import processNWCstring, tryToPayInvoice
+        except ImportError as e:
+            logging.error(f"[NWC] Failed to import nwc_utils: {e}")
             return None
+       
+        # Convert stored connection data directly to nwc_obj format
+        # (no need to reconstruct URI just to parse it again)
+        from nwc_utils import processNWCstring
+        from nostr_sdk import Keys
         
-        # Create payment request payload (NIP-47 format)
-        payment_request = {
-            "method": "pay_invoice",
-            "params": {
-                "invoice": lightning_invoice
-            }
+        nwc_obj = {
+            'wallet_pubkey': connection_data['wallet_pubkey'],
+            'relay': connection_data['relay'], 
+            'app_privkey': connection_data['secret'],
+            'app_pubkey': Keys.parse(connection_data['secret']).public_key().to_hex()
         }
-        
-        # Add unique ID for JSON-RPC
-        import secrets
-        payment_request["id"] = secrets.token_hex(16)
-        
-        # Encrypt the payment command using NIP-04
-        encrypted_command = nwc_client._encrypt_nip04(json.dumps(payment_request))
-        
-        # Create proper NOSTR event (kind 23194) with proper signing
-        from nostr_sdk import EventBuilder, Kind
-        
-        # Create NWC event with NO tags (NIP-47 standard)
-        event_builder = EventBuilder(
-            Kind(23194),
-            encrypted_command,
-            []  # No tags for NIP-47
-        )
-        
-        # Sign the event using the NWC client's keys (this creates proper ID and signature)
-        signed_event = event_builder.to_event(nwc_client.client_keys)
-        nwc_command = signed_event.as_json()  # This should have proper ID and signature
-        
-        logging.info("[NWC] Created proper signed NIP-47 payment command")
+       
+        if not nwc_obj:
+            logging.error("[NWC] Failed to process NWC connection string")
+            return None
+       
+        logging.info("[NWC] Creating payment using nwc_utils.tryToPayInvoice()")
+       
+        # Use tryToPayInvoice directly - this creates the complete signed event
+        signed_event = tryToPayInvoice(nwc_obj, lightning_invoice)
+       
+        # Convert to JSON for transmission
+        nwc_command = json.dumps(signed_event)
+       
+        logging.info("[NWC] Created payment command using tryToPayInvoice()")
+        logging.info(f"[NWC] Event ID: {signed_event['id'][:8]}...")
+       
         return nwc_command
-        
+       
     except Exception as e:
         logging.error(f"[NWC] Error creating payment command: {e}")
+        import traceback
+        logging.error(f"[NWC] Full traceback: {traceback.format_exc()}")
         return None
     
 async def get_reference_author(client, note_id):
-    """Get author display name for a referenced note."""
+
+    # Get author display name for a referenced note.
     try:
         reference_filter = (Filter()
                         .ids([note_id])

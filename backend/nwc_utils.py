@@ -1,168 +1,204 @@
-# pip3 install websocket-client
-from websocket import create_connection
+# Cross-platform nwc_utils using cryptography library (like your existing nwc_client.py)
 import json
 import base64
 import time
 import math
 import hashlib
-# pip3 install secp256k1
-from secp256k1 import PrivateKey, PublicKey
-# pip3 install pycryptodome==3.10.1
-from Crypto import Random
-from Crypto.Cipher import AES
-from Crypto.Util import Counter
-import threading
+import secrets
+import os # Added for os.urandom for IV
 
-BS = 16
-pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS)
-unpad = lambda s : s[:-ord(s[len(s)-1:])]
+# Removed old Crypto imports as they are replaced by cryptography
+# from Crypto import Random
+# from Crypto.Cipher import AES
 
-def encrypt( privkey, pubkey, plaintext ):
-    key = PublicKey( bytes.fromhex( "02" + pubkey ), True ).tweak_mul( bytes.fromhex( privkey ) ).serialize().hex()[ 2: ]
-    key_bytes = 32
-    key = bytes.fromhex( key )
-    plaintext = pad( plaintext )
-    plaintext = plaintext.encode( "utf-8" )
-    assert len( key ) == key_bytes
+# Imports for cryptography library
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives import serialization # Needed for loading public keys from bytes
 
-    # Choose a random, 16-byte IV.
-    iv = Random.new().read( AES.block_size )
+# nostr_sdk is used for key parsing and signing fallback
+from nostr_sdk import Keys, PublicKey
 
-    # Create AES-CTR cipher.
-    aes = AES.new( key, AES.MODE_CBC, iv )
+# secp256k1 is an optional dependency, but we'll use cryptography for ECDH consistently
+# try:
+#     from secp256k1 import PrivateKey, PublicKey as Secp256k1PublicKey  # type: ignore
+#     HAS_SECP256K1 = True
+#     print("[NWC] Using secp256k1 for crypto operations")
+# except ImportError:
+#     HAS_SECP256K1 = False
+#     print("[NWC] secp256k1 not available, using cryptography fallback")
 
-    # Encrypt and return IV and ciphertext.
-    ciphertext = aes.encrypt( plaintext )
+# NIP-04 does not use custom padding/unpadding functions, cryptography handles PKCS7 padding
+# BS = 16
+# pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS)
+# unpad = lambda s : s[:-ord(s[len(s)-1:])]
 
-    # Convert to base64
-    cipher_b64 = base64.b64encode(ciphertext).decode( 'ascii' )
-    cipher_iv = base64.b64encode(iv).decode( 'ascii' )
+def _derive_shared_secret(privkey_hex: str, pubkey_hex: str) -> bytes:
+    """
+    Derives the NIP-04 shared secret (32-byte X-coordinate) using ECDH.
+    Uses cryptography library.
+    """
+    # Load private key
+    priv_key_int = int(privkey_hex, 16)
+    private_key = ec.derive_private_key(priv_key_int, ec.SECP256K1(), default_backend())
 
-    return cipher_b64 + "?iv=" + cipher_iv
+    # Load public key
+    # NIP-04 public keys are typically the 32-byte X-coordinate.
+    # cryptography's from_encoded_point expects a compressed (02/03 prefix) or uncompressed (04 prefix) point.
+    # We must prepend '02' for the compressed form if it's just the raw x-coordinate.
+    if len(pubkey_hex) == 64:
+        public_key_bytes = bytes.fromhex('02' + pubkey_hex)
+    elif len(pubkey_hex) == 66 and (pubkey_hex.startswith('02') or pubkey_hex.startswith('03')):
+        public_key_bytes = bytes.fromhex(pubkey_hex)
+    elif len(pubkey_hex) == 128 and pubkey_hex.startswith('04'):
+        public_key_bytes = bytes.fromhex(pubkey_hex)
+    else:
+        raise ValueError(f"Public key hex '{pubkey_hex}' is not in a recognized 64-char (x-coord), 66-char (compressed), or 128-char (uncompressed) hex format.")
 
-def decrypt( privkey, pubkey, ciphertext ):
-    key = PublicKey( bytes.fromhex( "02" + pubkey ), True ).tweak_mul( bytes.fromhex( privkey ) ).serialize().hex()[ 2: ]
-    key_bytes = 32
-    key = bytes.fromhex( key )
-    ( ciphertext, iv ) = ciphertext.split( "?iv=" )
-    ciphertext = base64.b64decode( ciphertext.encode( 'ascii' ) )
-    iv = base64.b64decode( iv.encode( 'ascii' ) )
-    assert len( key ) == key_bytes
+    public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), public_key_bytes)
 
-    # Create AES-CTR cipher.
-    aes = AES.new( key, AES.MODE_CBC, iv )
+    # Derive shared secret (X-coordinate of the shared point)
+    shared_secret = private_key.exchange(ec.ECDH(), public_key)
+    
+    # Ensure it's 32 bytes for AES-256 key
+    if len(shared_secret) != 32:
+        raise ValueError(f"Derived shared secret length is not 32 bytes ({len(shared_secret)}). Expected for AES key.")
+    
+    return shared_secret
 
-    # Decrypt and return the plaintext.
-    plaintext = aes.decrypt( ciphertext ).decode( 'ascii' )
-    plaintext = unpad( plaintext )
-    return plaintext
+def encrypt(privkey_hex, pubkey_hex, plaintext):
+    """NIP-04 encryption using cryptography library for standard ECDH and AES-256-CBC."""
+    try:
+        # Derive AES key using standard ECDH
+        aes_key = _derive_shared_secret(privkey_hex, pubkey_hex)
+        
+        # PKCS7 padding
+        padder = padding.PKCS7(algorithms.AES.block_size).padder()
+        padded_plaintext = padder.update(plaintext.encode('utf-8')) + padder.finalize()
 
-def sha256( text_to_hash ):
-	m = hashlib.sha256()
-	m.update(bytes(text_to_hash, 'UTF-8'))
-	return m.digest().hex()
+        # Generate a random 16-byte IV (block_size is in bits, os.urandom expects bytes)
+        iv = os.urandom(algorithms.AES.block_size // 8) # Corrected: Divide by 8 to get bytes
 
-def processNWCstring( string ):
-	if ( string[ 0:22 ] != "nostr+walletconnect://" ):
-		print( 'Your pairing string was invalid, try one that starts with this: nostr+walletconnect://' )
-		return
-	string = string[ 22: ]
-	arr = string.split( "&" )
-	item = arr[ 0 ].split( "?" )
-	del arr[ 0 ]
-	arr.insert( 0, item[ 0 ] )
-	arr.insert( 1, item[ 1 ] )
-	arr[ 0 ] = "wallet_pubkey=" + arr[ 0 ]
-	arr2 = []
-	obj = {}
-	for item in arr:
-		item = item.split( "=" )
-		arr2.append( item[ 0 ] )
-		arr2.append( item[ 1 ] )
-	for index, item in enumerate( arr2 ):
-		if ( item == "secret" ):
-			arr2[ index ] = "app_privkey"
-	for index, item in enumerate( arr2 ):
-		if ( index % 2 ):
-			obj[ arr2[ index - 1 ] ] = item
-	obj[ "app_pubkey" ] = PrivateKey( bytes.fromhex( obj[ "app_privkey" ] ) ).pubkey.serialize().hex()[ 2: ]
-	return obj
+        # Create AES-CBC cipher.
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
 
-def getEvents( relay, ids, kinds, until, since, limit, etags, ptags ):
-    events = []
-    subId = PrivateKey().serialize()[ 0:16 ]
-    myfilter = {}
-    if ( ids ):
-        myfilter[ "ids" ] = ids
-    if ( kinds ):
-	    myfilter[ "kinds" ] = kinds
-    if ( until ):
-        myfilter[ "until" ] = until
-    if ( since ):
-        myfilter[ "since" ] = since
-    if ( limit ):
-        myfilter[ "limit" ] = limit
-    if ( etags ):
-        myfilter[ "#e" ] = etags
-    if ( ptags ):
-        myfilter[ "#p" ] = ptags
-    subscription = [ "REQ", subId, myfilter ]
-    ws = create_connection( relay )
-    ws.send( json.dumps( subscription ) )
-    for i in range( limit + 1 ):
-        response = ws.recv()
-        response = json.loads( response )
-        if ( len( response ) < 3 ):
-        	continue
-        events.append( response[ 2 ] )
-        ws.close()
-    return events
+        # Convert to base64
+        cipher_b64 = base64.b64encode(ciphertext).decode('ascii')
+        iv_b64 = base64.b64encode(iv).decode('ascii')
 
-def getResponse( nwc_obj, event_id, val ):
-	relay = nwc_obj[ "relay" ]
-	ids = None
-	kinds = [ 23195 ]
-	until = None
-	since = None
-	limit = 1
-	etags = [ event_id ]
-	ptags = [ nwc_obj[ "app_pubkey" ] ]
-	events = []
-	for i in [1,2,3,4,5,6,7]:
-		if ( not len( events ) ):
-			events2 = getEvents( relay, ids, kinds, until, since, limit, etags, ptags )
-			if ( not not len( events2 ) ): events = events2
-	if ( not not len( events ) ):
-		val[ 0 ] = events[ 0 ]
-		return
-	val[ 0 ] = events
-	return
+        return cipher_b64 + "?iv=" + iv_b64
+    except Exception as e:
+        raise Exception(f"Encryption failed: {e}")
 
-def sendEvent( event, nwc_obj ):
-    event_id = json.loads( event )[ 1 ][ "id" ]
-    relay = nwc_obj[ "relay" ]
-    response = None
-    ws = create_connection( relay )
-    ws.send( event )
-    response = ws.recv()
-    ws.close()
-    return response
+def decrypt(privkey_hex, pubkey_hex, encrypted_content):
+    """NIP-04 decryption using cryptography library for standard ECDH and AES-256-CBC."""
+    try:
+        if '?iv=' not in encrypted_content:
+            raise ValueError("Invalid NIP-04 content format: missing '?iv=' separator.")
 
-def getSignedEvent( event, privkey ):
-    eventData = json.dumps([
-        0,
-        event['pubkey'],
-        event['created_at'],
-        event['kind'],
-        event['tags'],
-        event['content']
-    ], separators=( ',', ':' ) )
-    event[ "id" ] = sha256( eventData );
-    privkey = PrivateKey( bytes.fromhex( privkey ) )
-    event[ "sig" ] = privkey.schnorr_sign( bytes.fromhex( event[ "id" ] ), "none", True ).hex()
-    return event
+        parts = encrypted_content.split('?iv=')
+        if len(parts) != 2:
+            raise ValueError("Invalid NIP-04 content format: incorrect number of parts after splitting by '?iv='.")
 
-def makeInvoice( nwc_obj, amt, desc ):
+        ciphertext_b64 = parts[0]
+        iv_b64 = parts[1]
+
+        ciphertext = base64.b64decode(ciphertext_b64)
+        iv = base64.b64decode(iv_b64)
+
+        # Derive AES key using standard ECDH
+        aes_key = _derive_shared_secret(privkey_hex, pubkey_hex)
+
+        # Create AES-CBC cipher.
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+
+        # Unpad PKCS7
+        unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
+        plaintext_bytes = unpadder.update(padded_plaintext) + unpadder.finalize()
+        
+        return plaintext_bytes.decode('utf-8')
+    except Exception as e:
+        raise Exception(f"Decryption failed: {e}")
+
+def sha256(text_to_hash):
+    """SHA256 hash function"""
+    m = hashlib.sha256()
+    m.update(bytes(text_to_hash, 'UTF-8'))
+    return m.digest().hex()
+
+def getSignedEvent(event, privkey):
+    """Create properly signed NOSTR event using nostr-sdk"""
+    try:
+        # Calculate event ID using correct NIP-01 format
+        eventData = json.dumps([
+            0,
+            event['pubkey'],
+            event['created_at'],
+            event['kind'],
+            event['tags'],
+            event['content']
+        ], separators=(',', ':'))
+        
+        event["id"] = sha256(eventData)
+        
+        # Use nostr-sdk for signing
+        client_keys = Keys.parse(privkey) # privkey should be hex string
+        event_id_bytes = bytes.fromhex(event["id"])
+        signature = client_keys.sign_schnorr(event_id_bytes) # Removed .to_hex()
+        event["sig"] = signature
+        
+        return event
+    except Exception as e:
+        raise Exception(f"Event signing failed: {e}")
+
+def processNWCstring(string):
+    """Parse NWC connection string"""
+    if string[0:22] != "nostr+walletconnect://":
+        print('Your pairing string was invalid, try one that starts with this: nostr+walletconnect://')
+        return None
+        
+    string = string[22:]
+    arr = string.split("&")
+    item = arr[0].split("?")
+    del arr[0]
+    arr.insert(0, item[0])
+    arr.insert(1, item[1])
+    arr[0] = "wallet_pubkey=" + arr[0]
+    arr2 = []
+    obj = {}
+    
+    for item in arr:
+        item = item.split("=")
+        arr2.append(item[0])
+        arr2.append(item[1])
+        
+    for index, item in enumerate(arr2):
+        if item == "secret":
+            arr2[index] = "app_privkey"
+            
+    for index, item in enumerate(arr2):
+        if index % 2:
+            obj[arr2[index - 1]] = item
+    
+    # Derive app_pubkey using nostr_sdk (consistent and reliable)
+    try:
+        client_keys = Keys.parse(obj["app_privkey"]) # app_privkey should be hex string
+        obj["app_pubkey"] = client_keys.public_key().to_hex()
+    except Exception as e:
+        raise Exception(f"Failed to derive app_pubkey: {e}")
+        
+    return obj
+
+# NWC Command Functions
+
+def makeInvoice(nwc_obj, amt, desc):
+    """Create Lightning invoice via NWC"""
     msg = json.dumps({
         "method": "make_invoice",
         "params": {
@@ -170,32 +206,55 @@ def makeInvoice( nwc_obj, amt, desc ):
             "description": desc,
         }
     })
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
     obj = {
         "kind": 23194,
         "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        "pubkey": nwc_obj["app_pubkey"],
     }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    val = [False]
-    download_thread = threading.Thread( target=getResponse, name="Background", args=( nwc_obj, eid, val ) )
-    download_thread.start()
-    sendEvent( event, nwc_obj )
-    for i in [1,2,3]:
-    	if ( not val[ 0 ] ):
-    		time.sleep( 1 )
-    		continue
-    response = val[ 0 ]
-    ersp = response[ "content" ]
-    drsp = decrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], ersp )
-    dobj = json.loads( drsp )
-    return dobj
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
+
+def getBalance(nwc_obj):
+    """Get wallet balance via NWC"""
+    msg = {
+        "method": "get_balance"
+    }
+    msg = json.dumps(msg)
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
+    obj = {
+        "kind": 23194,
+        "content": emsg,
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        "pubkey": nwc_obj["app_pubkey"],
+    }
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
+
+def listTx(nwc_obj, params={}):
+    """List transactions via NWC"""
+    msg = {
+        "method": "list_transactions",
+        "params": params
+    }
+    msg = json.dumps(msg)
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
+    obj = {
+        "kind": 23194,
+        "content": emsg,
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        # Corrected: pubkey should be app_pubkey from nwc_obj, not app_privkey
+        "pubkey": nwc_obj["app_pubkey"], 
+    }
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
 
 def checkInvoice(nwc_obj, invoice=None, payment_hash=None):
+    """Check invoice status via NWC"""
     if invoice is None and payment_hash is None:
         raise ValueError("Either 'invoice' or 'payment_hash' must be provided")
     
@@ -209,157 +268,56 @@ def checkInvoice(nwc_obj, invoice=None, payment_hash=None):
         "method": "lookup_invoice",
         "params": params
     })
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
     obj = {
         "kind": 23194,
         "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        "pubkey": nwc_obj["app_pubkey"],
     }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    val = [False]
-    download_thread = threading.Thread( target=getResponse, name="Background", args=( nwc_obj, eid, val ) )
-    download_thread.start()
-    sendEvent( event, nwc_obj )
-    for i in [1,2,3]:
-    	if ( not val[ 0 ] ):
-    		time.sleep( 1 )
-    		continue
-    response = val[ 0 ]
-    ersp = response[ "content" ]
-    drsp = decrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], ersp )
-    dobj = json.loads( drsp )
-    return dobj
-    # an error looks like this:
-    # {error: {code: "INTERNAL", message: "Something went wrong while looking up invoice: "}, result_type: "lookup_invoice"}
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
 
-def didPaymentSucceed( nwc_obj, invoice ):
-	invoice_info = checkInvoice( nwc_obj, invoice=invoice )
-	if ( invoice_info and not ( "error" in invoice_info ) and ( "result" in invoice_info ) and ( "preimage" in invoice_info[ "result" ] ) ):
-	    return invoice_info[ "result" ][ "preimage" ]
-	return False
+def getInfo(nwc_obj):
+    """Get wallet info via NWC"""
+    msg = {
+        "method": "get_info"
+    }
+    msg = json.dumps(msg)
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
+    obj = {
+        "kind": 23194,
+        "content": emsg,
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        "pubkey": nwc_obj["app_pubkey"],
+    }
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
 
-def tryToPayInvoice( nwc_obj, invoice, amnt = None ):
+def tryToPayInvoice(nwc_obj, invoice, amnt=None):
+    """Pay Lightning invoice via NWC (creates event only - no websocket sending)"""
     msg = {
         "method": "pay_invoice",
         "params": {
             "invoice": invoice,
         }
     }
-    if ( amnt ): msg[ "params" ][ "amount" ] = amnt
-    msg = json.dumps( msg )
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
+    if amnt: 
+        msg["params"]["amount"] = amnt
+    msg = json.dumps(msg)
+    emsg = encrypt(nwc_obj["app_privkey"], nwc_obj["wallet_pubkey"], msg)
     obj = {
         "kind": 23194,
         "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
+        "tags": [["p", nwc_obj["wallet_pubkey"]]],
+        "created_at": math.floor(time.time()),
+        "pubkey": nwc_obj["app_pubkey"],
     }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    sendEvent( event, nwc_obj )
+    event = getSignedEvent(obj, nwc_obj["app_privkey"])
+    return event
 
-def getInfo( nwc_obj ):
-    msg = {
-        "method": "get_info"
-    }
-    msg = json.dumps( msg )
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
-    obj = {
-        "kind": 23194,
-        "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
-    }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    val = [False]
-    download_thread = threading.Thread( target=getResponse, name="Background", args=( nwc_obj, eid, val ) )
-    download_thread.start()
-    sendEvent( event, nwc_obj )
-    for i in [1,2,3]:
-        if ( not val[ 0 ] ):
-            time.sleep( 1 )
-            continue
-    response = val[ 0 ]
-    ersp = response[ "content" ]
-    drsp = decrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], ersp )
-    dobj = json.loads( drsp )
-    return dobj
-
-def listTx( nwc_obj, params = {} ):
-    msg = {
-        "method": "list_transactions",
-        "params": params
-    }
-    msg = json.dumps( msg )
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
-    obj = {
-        "kind": 23194,
-        "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
-    }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    val = [False]
-    download_thread = threading.Thread( target=getResponse, name="Background", args=( nwc_obj, eid, val ) )
-    download_thread.start()
-    sendEvent( event, nwc_obj )
-    for i in [1,2,3]:
-        if ( not val[ 0 ] ):
-            time.sleep( 1 )
-            continue
-    response = val[ 0 ]
-    ersp = response[ "content" ]
-    drsp = decrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], ersp )
-    dobj = json.loads( drsp )
-    return dobj
-
-
-def getBalance( nwc_obj ):
-    msg = {
-        "method": "get_balance"
-    }
-    msg = json.dumps( msg )
-    emsg = encrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], msg );
-    obj = {
-        "kind": 23194,
-        "content": emsg,
-        "tags": [ [ "p", nwc_obj[ "wallet_pubkey" ] ] ],
-        "created_at": math.floor( time.time() ),
-        "pubkey": nwc_obj[ "app_pubkey" ],
-    }
-    event = getSignedEvent( obj, nwc_obj[ "app_privkey" ] )
-    eid = event[ "id" ]
-    event = json.dumps( ["EVENT", event], separators=( ',', ':' ) )
-    val = [False]
-    download_thread = threading.Thread( target=getResponse, name="Background", args=( nwc_obj, eid, val ) )
-    download_thread.start()
-    sendEvent( event, nwc_obj )
-    for i in [1,2,3]:
-        if ( not val[ 0 ] ):
-            time.sleep( 1 )
-            continue
-    response = val[ 0 ]
-    ersp = response[ "content" ]
-    drsp = decrypt( nwc_obj[ "app_privkey" ], nwc_obj[ "wallet_pubkey" ], ersp )
-    dobj = json.loads( drsp )
-    return dobj
-
-
-# print( makeInvoice( processNWCstring( nwc_string ), 100, "test" ) )
-# print( checkInvoice( processNWCstring( nwc_string ), invoice="lnbc1u1png6lw0pp5h4l73ajf4u548ktalztfwt7k9wtp9xhgqs6t0my0mw450nfkmnrsdq8w3jhxaqcqzzsxqyz5vqsp5asqxxjr2uhsfxyjwt2gxrq38dejkr76rmzl0zstjqlx8rrlcqpns9qxpqysgq22dwgadd7xnsnn8jzwkfxwy7nwclzt4d8wa3adrml83a0nvgy2hzm565k4qn0rcrzx7n2j8dszq9yqvhdx2z0xes77j5e480clx6d7cq2vvqj5" ) )
-# print( didPaymentSucceed( processNWCstring( nwc_string ), "lnbc700n1pngmqvkpp57yg7u02n2pxack552mwdl5k8derwsyrgh2uft0lptqvcw8qv9l0qdpuge6kuerfdenjqsrnw4cx2un5v4ehgmn9wssx7m3qwd6xzcmtv4ezumn9waescqzzsxqrrsssp5uy70kfvlwfw4xhlu0k7hr7luq0qwgl5sdc9lyk4aqxvqzqqesjes9qyyssq9w7dyt6e64dyhws70qkvnauq59vmkh9lt4j5t598x3f7xzzv5edyg2g0rtdphtqmkqq3xja27kz4gvdgdy7qeymtms32d82gpmtekvspeyp4rq" ) )
-# print( tryToPayInvoice( processNWCstring( nwc_string ), "lnbc700n1pngmqvkpp57yg7u02n2pxack552mwdl5k8derwsyrgh2uft0lptqvcw8qv9l0qdpuge6kuerfdenjqsrnw4cx2un5v4ehgmn9wssx7m3qwd6xzcmtv4ezumn9waescqzzsxqrrsssp5uy70kfvlwfw4xhlu0k7hr7luq0qwgl5sdc9lyk4aqxvqzqqesjes9qyyssq9w7dyt6e64dyhws70qkvnauq59vmkh9lt4j5t598x3f7xzzv5edyg2g0rtdphtqmkqq3xja27kz4gvdgdy7qeymtms32d82gpmtekvspeyp4rq" ) )
-# print( listTx( processNWCstring( nwc_string, { "type": "outgoing"} ) ) )
-# print( getBalance( processNWCstring( nwc_string ) ) )
+def didPaymentSucceed(nwc_obj, invoice):
+    """Check if payment succeeded - returns event for checking"""
+    return checkInvoice(nwc_obj, invoice=invoice)

@@ -279,68 +279,164 @@ class Server:
             logging.error(f"[NWC] Error parsing command: {e}")
             return None
 
-    async def forward_nwc_payment(self, encrypted_nwc_event, relay_url):
+    async def forward_nwc_payment(self, signed_nwc_event_json, relay_url):
+    
         try:
             import websockets
             import json
-            import time
+            import asyncio
             import secrets
             
-            logging.info(f"[NWC] Forwarding to wallet relay: {relay_url}")
+            logging.info(f"[NWC DEBUG] Forwarding to wallet relay: {relay_url}")
             
-            # Create a minimal unsigned NOSTR event for the relay
-            # The relay will accept unsigned events for NWC
-            nwc_event = {
-                "kind": 23194,
-                "created_at": int(time.time()),
-                "content": encrypted_nwc_event,  # Use the encrypted content as-is
-                "tags": [],
-                "pubkey": "",  # Empty for anonymous
-                "id": "",      # Empty
-                "sig": ""      # Empty
-            }
+            # Parse and log the complete event details
+            try:
+                signed_event = json.loads(signed_nwc_event_json)
+                event_id = signed_event['id']
+                client_pubkey = signed_event['pubkey']
+                wallet_pubkey = signed_event['tags'][0][1] if signed_event.get('tags') else 'MISSING'
+                
+                logging.info(f"[NWC DEBUG] Event ID: {event_id}")
+                logging.info(f"[NWC DEBUG] Client pubkey: {client_pubkey}")
+                logging.info(f"[NWC DEBUG] Wallet pubkey: {wallet_pubkey}")
+                logging.info(f"[NWC DEBUG] Event kind: {signed_event.get('kind')}")
+                logging.info(f"[NWC DEBUG] Event tags: {signed_event.get('tags')}")
+                logging.info(f"[NWC DEBUG] Content length: {len(signed_event.get('content', ''))}")
+                
+            except Exception as e:
+                logging.error(f"[NWC DEBUG] Failed to parse signed event: {e}")
+                return {'success': False, 'error': 'Invalid signed event format'}
             
-            logging.info(f"[NWC] Created minimal event for relay")
-            
-            # Connect to wallet relay and send event
+            # Connect and debug the full flow
             async with websockets.connect(relay_url) as websocket:
-                logging.info(f"[NWC] Connected to wallet relay")
+                logging.info(f"[NWC DEBUG] Connected to wallet relay")
                 
-                # Send the event
-                await websocket.send(json.dumps(["EVENT", nwc_event]))
-                logging.info(f"[NWC] Sent payment event to wallet")
+                # Step 1: Send the payment event FIRST (simpler approach)
+                event_message = json.dumps(["EVENT", signed_event])
+                await websocket.send(event_message)
+                logging.info(f"[NWC DEBUG] Sent payment event to relay")
+                logging.info(f"[NWC DEBUG] Event message: {event_message[:200]}...")
                 
-                # Wait for relay OK response
-                response_timeout = 20
-                start_time = time.time()
+                # Step 2: Wait for relay OK
+                relay_ok_received = False
+                ok_timeout = 10
+                ok_start = time.time()
                 
-                while time.time() - start_time < response_timeout:
+                while time.time() - ok_start < ok_timeout and not relay_ok_received:
                     try:
-                        response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                        response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
                         message = json.loads(response)
+                        logging.info(f"[NWC DEBUG] Received: {message}")
                         
                         if message[0] == "OK":
-                            event_id = message[1]
+                            ok_event_id = message[1]
                             accepted = message[2]
                             error_msg = message[3] if len(message) > 3 else ""
                             
-                            if accepted:
-                                logging.info(f"[NWC] Relay accepted payment request")
-                                return {'success': True, 'message': 'Payment request sent to wallet'}
+                            logging.info(f"[NWC DEBUG] Relay OK - Event: {ok_event_id[:8]}, Accepted: {accepted}")
+                            if error_msg:
+                                logging.info(f"[NWC DEBUG] Error message: {error_msg}")
+                            
+                            if accepted and ok_event_id == event_id:
+                                logging.info(f"[NWC DEBUG] ✅ Relay accepted our payment event")
+                                relay_ok_received = True
                             else:
-                                logging.error(f"[NWC] Relay rejected payment request: {error_msg}")
+                                logging.error(f"[NWC DEBUG] ❌ Relay rejected: {error_msg}")
                                 return {'success': False, 'error': f'Relay error: {error_msg}'}
+                        else:
+                            logging.info(f"[NWC DEBUG] Other message type: {message[0]}")
                     
                     except asyncio.TimeoutError:
+                        logging.info(f"[NWC DEBUG] No immediate response from relay...")
                         continue
                     except Exception as e:
-                        logging.error(f"[NWC] Error receiving response: {e}")
-                        return {'success': False, 'error': f'Response error: {str(e)}'}
+                        logging.error(f"[NWC DEBUG] Error receiving OK: {e}")
+                        continue
                 
-                return {'success': False, 'error': 'Relay timeout'}
+                if not relay_ok_received:
+                    logging.error(f"[NWC DEBUG] ❌ No OK received from relay within timeout")
+                    return {'success': False, 'error': 'No relay acknowledgment'}
+                
+                # Step 3: Now subscribe to responses and wait
+                subscription_id = secrets.token_hex(8)
+                subscribe_msg = [
+                    "REQ",
+                    subscription_id,
+                    {
+                        "kinds": [23195],  # NWC response kind
+                        "#e": [event_id],  # Events referencing our payment request
+                        "#p": [client_pubkey],  # Events to our client pubkey
+                        "since": int(time.time()) - 60  # Look back 1 minute
+                    }
+                ]
+                
+                await websocket.send(json.dumps(subscribe_msg))
+                logging.info(f"[NWC DEBUG] Subscribed with filter: {subscribe_msg}")
+                
+                # Step 4: Wait for wallet response
+                payment_response = None
+                response_timeout = 20  # Shorter timeout for debugging
+                start_time = time.time()
+                
+                logging.info(f"[NWC DEBUG] Waiting up to {response_timeout}s for wallet response...")
+                
+                while time.time() - start_time < response_timeout:
+                    try:
+                        response = await asyncio.wait_for(websocket.recv(), timeout=3.0)
+                        message = json.loads(response)
+                        
+                        logging.info(f"[NWC DEBUG] Received during wait: {message[0]} - {message}")
+                        
+                        if message[0] == "EVENT":
+                            response_event = message[2]
+                            logging.info(f"[NWC DEBUG] Response event kind: {response_event.get('kind')}")
+                            logging.info(f"[NWC DEBUG] Response event tags: {response_event.get('tags', [])}")
+                            
+                            if response_event.get('kind') == 23195:
+                                logging.info(f"[NWC DEBUG] 🎯 Found kind 23195 response!")
+                                # Check if it references our event
+                                event_tags = [tag for tag in response_event.get('tags', []) if tag[0] == 'e']
+                                if any(event_id in tag for tag in event_tags):
+                                    logging.info(f"[NWC DEBUG] ✅ Response references our event!")
+                                    payment_response = response_event
+                                    break
+                                else:
+                                    logging.info(f"[NWC DEBUG] ❌ Response doesn't reference our event")
+                        
+                        elif message[0] == "EOSE":
+                            logging.info(f"[NWC DEBUG] End of stored events")
+                            continue
+                    
+                    except asyncio.TimeoutError:
+                        logging.info(f"[NWC DEBUG] Still waiting... ({int(time.time() - start_time)}s elapsed)")
+                        continue
+                    except Exception as e:
+                        logging.error(f"[NWC DEBUG] Error during wait: {e}")
+                        continue
+                
+                # Step 5: Close subscription
+                await websocket.send(json.dumps(["CLOSE", subscription_id]))
+                logging.info(f"[NWC DEBUG] Closed subscription")
+                
+                # Step 6: Return results
+                if payment_response:
+                    logging.info(f"[NWC DEBUG] ✅ SUCCESS: Payment response received!")
+                    return {
+                        'success': True, 
+                        'message': 'Payment processed',
+                        'encrypted_response': payment_response
+                    }
+                else:
+                    logging.warning(f"[NWC DEBUG] ❌ TIMEOUT: No payment response within {response_timeout}s")
+                    return {
+                        'success': False, 
+                        'error': f'Payment timeout - no response from wallet after {response_timeout}s'
+                    }
                 
         except Exception as e:
-            logging.error(f"[NWC] Error forwarding payment: {e}")
+            logging.error(f"[NWC DEBUG] Error forwarding payment: {e}")
+            import traceback
+            logging.error(f"[NWC DEBUG] Full traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
 
     def handle_connected_session(self, session):
