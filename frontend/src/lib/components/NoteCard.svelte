@@ -77,7 +77,7 @@
     }));
   }
 
-  function handleZap() {
+  function handleProfileZap() {
     // Check if note has Lightning address
     if (!note.lud16) {
       // Show toast for no Lightning address
@@ -90,21 +90,51 @@
       return;
     }
 
-    console.log('Setting up zap for note:', note);
+    console.log('Setting up profile zap for user:', note);
     const zapContext = {
-      // Note-specific context for kind 9734 zap note
+      // Profile zap context - NO note ID
+      authorPubkey: note.pubkey,
+      authorName: note.display_name || shortenNpub(note.pubkey),
+      lud16: note.lud16
+    };
+    console.log('Profile zap context:', zapContext);
+    
+    window.dispatchEvent(new CustomEvent('openZapModal', { 
+      detail: { 
+        context: zapContext,
+        zapType: ZapType.PROFILE_ZAP // Profile zapping
+      }
+    }));
+  }
+
+  function handleNoteZap() {
+    // Check if note has Lightning address
+    if (!note.lud16) {
+      // Show toast for no Lightning address
+      window.dispatchEvent(new CustomEvent('showToast', {
+        detail: {
+          message: 'Cannot Zap, no Lightning address',
+          type: 'error'
+        }
+      }));
+      return;
+    }
+
+    console.log('Setting up note zap for note:', note);
+    const zapContext = {
+      // Note-specific context for kind 9734 zap note - INCLUDES note ID
       noteId: note.id,
       authorPubkey: note.pubkey,
       content: note.content,
       authorName: note.display_name || shortenNpub(note.pubkey),
       lud16: note.lud16
     };
-    console.log('Zap context:', zapContext);
+    console.log('Note zap context:', zapContext);
     
     window.dispatchEvent(new CustomEvent('openZapModal', { 
       detail: { 
         context: zapContext,
-        zapType: ZapType.NOTE_ZAP // Explicitly set to note zapping
+        zapType: ZapType.NOTE_ZAP // Note zapping
       }
     }));
   }
@@ -139,9 +169,9 @@
       {#if hasLightning}
         <div class="flex items-center text-yellow-500 dark:text-yellow-400" title="Lightning Address: {note.lud16}">
           <button 
-            on:click={handleZap}
+            on:click={handleProfileZap}
             class="flex items-center p-1 hover:text-yellow-600 dark:hover:text-yellow-300 transition-colors cursor-pointer"
-            title="Send Lightning Zap"
+            title="Zap User {note.display_name || shortenNpub(note.pubkey)}"
           >
             <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
               <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
@@ -152,8 +182,8 @@
       
       <span class="flex items-center text-sm text-gray-500 dark:text-gray-400">
         <svg class="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <circle cx="12" cy="12" r="10" stroke-width="2"/>
-          <path d="M12 6v6l4 2" stroke-width="2"/>
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12,6 12,12 16,14"/>
         </svg>
         {timeAgo}
       </span>
@@ -161,12 +191,14 @@
   </div>
 
   <!-- Note Content -->
-  <div class="text-gray-800 dark:text-gray-200 mb-4 text-base break-words">
-    {note.content}
+  <div class="mb-4">
+    <p class="text-gray-900 dark:text-white text-base leading-relaxed whitespace-pre-wrap break-words">
+      {note.content}
+    </p>
   </div>
 
   <!-- Action Buttons -->
-  <div class="flex items-center justify-around sm:justify-start px-2 sm:px-0 space-x-3 sm:space-x-6 text-gray-500 dark:text-gray-400">
+  <div class="flex items-center justify-between pt-3 border-t border-gray-200 dark:border-gray-700">
     <!-- Reply Button -->
     <button 
       on:click={handleReply}
@@ -175,10 +207,8 @@
     >
       <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path 
-          d="M9 17L4 12M4 12L9 7M4 12H16C18.7614 12 21 9.76142 21 7" 
-          stroke-width="2" 
-          stroke-linecap="round" 
-          stroke-linejoin="round"
+          d="M3 20l1.3-3.9A9 9 0 1 1 8.1 21L3 20z" 
+          stroke-width="2"
         />
       </svg>
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Reply</span>
@@ -192,28 +222,20 @@
     >
       <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path 
-          d="M4 4v7a4 4 0 0 0 4 4h12" 
-          stroke-width="2" 
-          stroke-linecap="round" 
-          stroke-linejoin="round"
+          d="M17 1l4 4-4 4" 
+          stroke-width="2"
         />
         <path 
-          d="M20 7l-3-3 3-3" 
-          stroke-width="2" 
-          stroke-linecap="round" 
-          stroke-linejoin="round"
+          d="M3 11V9a4 4 0 0 1 4-4h14" 
+          stroke-width="2"
         />
         <path 
-          d="M20 20v-7a4 4 0 0 0-4-4H4" 
-          stroke-width="2" 
-          stroke-linecap="round" 
-          stroke-linejoin="round"
+          d="M7 23l-4-4 4-4" 
+          stroke-width="2"
         />
         <path 
-          d="M4 17l3 3-3 3" 
-          stroke-width="2" 
-          stroke-linecap="round" 
-          stroke-linejoin="round"
+          d="M21 13v2a4 4 0 0 1-4 4H3" 
+          stroke-width="2"
         />
       </svg>
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Boost</span>
@@ -239,12 +261,12 @@
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Quote</span>
     </button>
 
-    <!-- Zap Button (Enhanced - shows if Lightning available) -->
+    <!-- Zap Button (Note Zap) -->
     {#if hasLightning}
       <button 
-        on:click={handleZap}
+        on:click={handleNoteZap}
         class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-yellow-500 dark:hover:text-yellow-400 transition-colors group"
-        title="Send Lightning Zap"
+        title="Zap Note"
       >
         <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 2v11h3v9l7-12h-4l4-8z"/>

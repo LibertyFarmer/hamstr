@@ -817,9 +817,15 @@ def send_zap():
     recipient_lud16 = data.get('recipient_lud16', '')
     amount_sats = data.get('amount_sats', 0)
     message = data.get('message', '')
-    zap_type = data.get('zap_type', 1)  # Default to NOTE_ZAP
+    zap_type = ZapType(data.get('zap_type', 1))  # Convert integer to enum
     note_id = data.get('note_id')  # For note zaps
     recipient_pubkey = data.get('recipient_pubkey', '')
+
+    socketio_logger.info(f"[SYSTEM] About to check e tag condition:")
+    socketio_logger.info(f"[SYSTEM] zap_type: {zap_type} (type: {type(zap_type)})")
+    socketio_logger.info(f"[SYSTEM] ZapType.NOTE_ZAP: {ZapType.NOTE_ZAP} (type: {type(ZapType.NOTE_ZAP)})")
+    socketio_logger.info(f"[SYSTEM] note_id: {note_id}")
+    socketio_logger.info(f"[SYSTEM] zap_type == ZapType.NOTE_ZAP: {zap_type == ZapType.NOTE_ZAP}")    
     
     # Validate inputs
     if not recipient_lud16:
@@ -873,19 +879,26 @@ def send_zap():
         # Create kind 9734 zap note
         keys = Keys.parse(nsec)
         
-        # Build zap note tags
+        # Build zap note tags (REPLACE the entire tag section with this)
         tags = [
             Tag.parse(["amount", str(amount_sats * 1000)]),  # Amount in millisats
             Tag.parse(["lnaddr", recipient_lud16]),           # Lightning address
             Tag.parse(["p", recipient_pubkey])                # Recipient pubkey
         ]
-        
-        # Add note reference for note zaps
+
+
+        # Add note reference for note zaps ONLY
         if zap_type == ZapType.NOTE_ZAP and note_id:
             tags.append(Tag.parse(["e", note_id]))
-        
+            socketio_logger.info(f"[CLIENT] Added e tag for note zap: {note_id}")
+        elif zap_type == ZapType.PROFILE_ZAP:
+            socketio_logger.info(f"[CLIENT] Profile zap - no e tag needed")
+
         # Add NWC relay for server processing
         tags.append(Tag.parse(["relay", nwc_relay]))
+
+        # Add publishing relays for better zap distribution
+        tags.append(Tag.parse(["relays", "wss://nos.lol", "wss://relay.damus.io"]))
 
         # Create and sign the kind 9734 event
         builder = EventBuilder(Kind(9734), message, tags)
@@ -991,16 +1004,37 @@ def send_zap():
                                                                     decompressed_payment = decompress_nostr_data(payment_response)
                                                                     payment_result = json.loads(decompressed_payment)
                                                                     
+                                                                    # PHASE 4A: SIMPLE PAYMENT CONFIRMATION TO SERVER
                                                                     if payment_result.get("success"):
-                                                                        socketio_logger.info("[CLIENT] ⚡ Zap payment successful!")
-                                                                        result_container[0] = {
-                                                                            "success": True,
-                                                                            "message": "⚡ Zap sent successfully!",
-                                                                            "preimage": payment_result.get("preimage")
-                                                                        }
+                                                                        socketio_logger.info("[CLIENT] ⚡ Zap payment successful! Sending success confirmation to server")
+                                                                        
+                                                                        # Send simple success control message
+                                                                        client.core.send_single_packet(session, 0, 0, "ZAP_SUCCESS".encode(), MessageType.ZAP_SUCCESS_CONFIRM)
+                                                                        
+                                                                        # Wait for final server control message
+                                                                        if client.core.wait_for_specific_message(session, MessageType.READY, timeout=15):
+                                                                            socketio_logger.info("[CLIENT] Server final message received")
+                                                                            # Check the message content to see if zap was published
+                                                                            if "ZAP_PUBLISHED" in str(message):  # You'll need to get the actual message content
+                                                                                result_container[0] = {
+                                                                                    "success": True,
+                                                                                    "message": "⚡ Zap sent and published successfully!"
+                                                                                }
+                                                                            else:
+                                                                                result_container[0] = {
+                                                                                    "success": True,
+                                                                                    "message": "⚡ Payment successful but zap note failed to publish"
+                                                                                }
+                                                                                        
+                                                                                        
                                                                     else:
+                                                                        # Handle payment failure
                                                                         error_msg = payment_result.get("error", "Payment failed")
                                                                         socketio_logger.error(f"[CLIENT] Payment failed: {error_msg}")
+                                                                        
+                                                                        # Send simple failure control message
+                                                                        client.core.send_single_packet(session, 0, 0, "ZAP_FAILED".encode(), MessageType.ZAP_FAILED)
+                                                                        
                                                                         result_container[0] = {
                                                                             "success": False,
                                                                             "message": f"Payment failed: {error_msg}"
@@ -1069,8 +1103,17 @@ def send_zap():
                         socketio_logger.error("[CLIENT] Failed to send zap packets")
                         result_container[0] = {"success": False, "message": "Failed to send zap packets"}
                     
-                    # Always disconnect at the end
-                    client.core.disconnect(session)
+                    # PHASE 4G: WAIT FOR SERVER DISCONNECT AND ACK IT
+                    socketio_logger.info("[CLIENT] Waiting for server disconnect...")
+                    if client.core.wait_for_specific_message(session, MessageType.DISCONNECT, timeout=10):
+                        socketio_logger.info("[CLIENT] Received disconnect from server, sending ACK")
+                        # Send disconnect ACK
+                        client.core.send_single_packet(session, 0, 0, "DISCONNECT_ACK".encode(), MessageType.ACK)
+                        socketio_logger.info("[CLIENT] Zap session completed successfully")
+                    else:
+                        socketio_logger.warning("[CLIENT] No disconnect received from server, disconnecting anyway")
+                        client.core.disconnect(session)
+                        
                 else:
                     socketio_logger.error("[CLIENT] Failed to connect to server")
                     result_container[0] = {"success": False, "message": "Failed to connect to server"}
@@ -1078,6 +1121,16 @@ def send_zap():
             except Exception as e:
                 socketio_logger.error(f"[CLIENT] Radio operation error: {e}")
                 result_container[0] = {"success": False, "message": f"Radio error: {str(e)}"}
+        
+        # Execute radio operation in thread
+        radio_thread = threading.Thread(target=radio_operation)
+        radio_thread.start()
+        radio_thread.join(timeout=180)
+        
+        if radio_thread.is_alive():
+            result_container[0] = {"success": False, "message": "Radio operation timeout"}
+            
+        return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
         
     except Exception as e:
         socketio_logger.error(f"[CLIENT] Error creating zap note: {e}")
@@ -1087,15 +1140,6 @@ def send_zap():
         }), 500
     finally:
         radio_operation_in_progress = False
-
-        radio_thread = threading.Thread(target=radio_operation)
-    radio_thread.start()
-    radio_thread.join(timeout=180)  # Or whatever timeout you had
-
-    if radio_thread.is_alive():
-        result_container[0] = {"success": False, "message": "Radio operation timeout"}
-
-    return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
         
 # Static file routes
 @app.route('/', defaults={'path': ''})

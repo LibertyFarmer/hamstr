@@ -129,7 +129,12 @@ class Server:
                     elif tag_name == "e":
                         zap_data['note_id'] = tag_value
                     elif tag_name == "relay":
+                        # Single NWC relay - THIS is what server uses for payment forwarding
                         zap_data['nwc_relay'] = tag_value
+                        logging.info(f"[ZAP] Using NWC relay for payment: {tag_value}")
+                    elif tag_name == "relays":
+                        # Additional publishing relays - server ignores these for NWC
+                        logging.info(f"[ZAP] Found additional publishing relays: {tag[1:]}")
             
             # Validate required fields
             if not zap_data['lnaddr'] or not zap_data['recipient_pubkey']:
@@ -144,6 +149,38 @@ class Server:
         except Exception as e:
             logging.error(f"[ZAP] Error parsing kind 9734 zap note: {e}")
             return None
+        
+    async def handle_zap_success(self, session):
+        """Handle successful payment confirmation from client"""
+        logging.info("[ZAP] Payment successful - Lightning payment completed")
+        
+        # Send success response to client (payment worked)
+        await self.send_zap_final_response(session, True)
+        
+        # Just disconnect - cleanup happens automatically when session ends
+        self.core.send_disconnect(session)
+        logging.info("[ZAP] Zap success process completed, disconnected from client")
+
+    async def handle_zap_failure(self, session):
+        """Handle payment failure - don't publish, just disconnect"""
+        logging.warning("[ZAP] Payment failed - not publishing zap note")
+        
+        # Send failure response to client
+        await self.send_zap_final_response(session, False)  # This will send ZAP_FAILED_PUBLISH
+        
+        # Disconnect
+        self.core.send_disconnect(session)
+
+    async def send_zap_final_response(self, session, zap_published):
+        """Send simple control message instead of compressed response"""
+        if zap_published:
+            # Send simple success control message
+            self.core.send_single_packet(session, 0, 0, "ZAP_PUBLISHED".encode(), MessageType.READY)
+            logging.info("[ZAP] Sent ZAP_PUBLISHED control message")
+        else:
+            # Send simple failure control message  
+            self.core.send_single_packet(session, 0, 0, "ZAP_FAILED_PUBLISH".encode(), MessageType.READY)
+            logging.info("[ZAP] Sent ZAP_FAILED_PUBLISH control message")
 
     async def request_lightning_invoice_from_zap(self, lightning_address, amount_sats, zap_message=""):
         """Request Lightning invoice from LNURL callback (reuse existing method)."""
@@ -533,11 +570,16 @@ class Server:
                         
                         # Extract zap data from kind 9734 note
                         zap_data = self.parse_kind9734_zap_note(zap_note_json)
+
+                        logging.info(f"[ZAP DEBUG] Full incoming kind 9734 note: {json.dumps(zap_note_json, indent=2)}")
                         
                         if zap_data:
-
                             # Store the relay URL in the session for later use
                             session.nwc_relay_url = zap_data.get('nwc_relay', 'wss://relay.getalby.com/v1')
+                            
+                            # PHASE 4B: STORE ZAP NOTE FOR LATER PUBLISHING
+                            session.zap_kind9734_note = zap_note_json  # Add this line
+                            logging.info("[ZAP] Cached zap note for publishing after payment")
                             
                             # Generate Lightning invoice FIRST (before sending READY)
                             logging.info(f"[ZAP] Generating Lightning invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
@@ -759,6 +801,14 @@ class Server:
                         if self.core.send_ready(session):
                             if self.core.wait_for_ready(session):
                                 self.core.send_response(session, compressed_error)
+                                
+            elif msg_type == MessageType.ZAP_SUCCESS_CONFIRM:
+                logging.info("[ZAP] Payment successful! Publishing zap note...")
+                asyncio.run(self.handle_zap_success(session))
+
+            elif msg_type == MessageType.ZAP_FAILED:
+                logging.info("[ZAP] Payment failed! Cleaning up...")
+                asyncio.run(self.handle_zap_failure(session))   
 
             elif msg_type == MessageType.DONE:
                 logging.info("Received DONE from client")
