@@ -10,6 +10,7 @@ from core import Core, ModemState, MessageType
 from nostr import search_nostr, run_get_recent_notes, publish_note, search_user_notes
 from models import NoteRequestType, NoteType, NWCResponseCode, ZapType
 from protocol_utils import compress_nostr_data, decompress_nostr_data
+import urllib.parse
 import config
 import os
 
@@ -182,16 +183,16 @@ class Server:
             self.core.send_single_packet(session, 0, 0, "ZAP_FAILED_PUBLISH".encode(), MessageType.READY)
             logging.info("[ZAP] Sent ZAP_FAILED_PUBLISH control message")
 
-    async def request_lightning_invoice_from_zap(self, lightning_address, amount_sats, zap_message=""):
-        """Request Lightning invoice from LNURL callback (reuse existing method)."""
+    async def request_lightning_invoice_from_zap(self, lightning_address, amount_sats, zap_note_json, zap_message=""):
+        """Request Lightning invoice from LNURL callback with NIP-57 zap context."""
         # First resolve the Lightning address
         lnurl_data = await self.resolve_lightning_address(lightning_address)
         
         if lnurl_data is None:
             return None, "RECIPIENT_NOT_FOUND"
         
-        # Then request the invoice
-        return await self.request_lightning_invoice(lnurl_data, amount_sats, zap_message)
+        # Then request the invoice WITH the zap note
+        return await self.request_lightning_invoice(lnurl_data, amount_sats, zap_message, zap_note_json)
         
     async def resolve_lightning_address(self, lightning_address):
      
@@ -234,7 +235,7 @@ class Server:
             logging.error(f"[LNURL] Error resolving {lightning_address}: {e}")
             return None
 
-    async def request_lightning_invoice(self, lnurl_data, amount_sats, zap_message=""):
+    async def request_lightning_invoice(self, lnurl_data, amount_sats, zap_message="", zap_note_json=None):
        
        #Request Lightning invoice from LNURL callback
         try:
@@ -258,6 +259,13 @@ class Server:
                 "amount": amount_msats
             }
             
+            # Add nostr parameter for NIP-57 zap requests
+            if zap_note_json:
+                params["nostr"] = json.dumps(zap_note_json)
+                logging.info(f"[LNURL-ZAP] Added nostr parameter for NIP-57 zap request (note ID: {zap_note_json.get('id', 'unknown')[:8]})")
+            else:
+                logging.info(f"[LNURL] No zap_note_json provided - regular LNURL payment")
+
             # Add comment if provided and supported
             if zap_message and lnurl_data.get("commentAllowed", 0) > 0:
                 max_comment_length = lnurl_data["commentAllowed"]
@@ -270,9 +278,15 @@ class Server:
             logging.info(f"[LNURL] Requesting invoice for {amount_sats} sats")
             logging.info(f"[LNURL] Callback: {callback_url}")
             
-            # Make request to callback URL
-            response = requests.get(callback_url, params=params, timeout=10)
-            response.raise_for_status()
+            # Make request to callback URL - manually build URL with params
+            if params:
+                url_params = urllib.parse.urlencode(params)
+                full_url = f"{callback_url}?{url_params}"
+            else:
+                full_url = callback_url
+
+            logging.info(f"[LNURL] Requesting URL: {full_url}")
+            response = requests.get(full_url, timeout=10)
             
             invoice_data = response.json()
             
@@ -591,6 +605,7 @@ class Server:
                             invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
                                 zap_data['lnaddr'], 
                                 zap_data['amount_sats'], 
+                                zap_note_json,
                                 zap_data['message']
                             ))
                             
@@ -978,6 +993,7 @@ class Server:
                         invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
                             zap_data['lnaddr'], 
                             zap_data['amount_sats'], 
+                            zap_note_json,
                             zap_data['message']
                         ))
                         
