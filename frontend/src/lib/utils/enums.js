@@ -15,6 +15,13 @@ export const NoteType = {
     REPOST: 4
 };
 
+// Add ZapType enum for different zap scenarios
+
+export const ZapType = {
+    NOTE_ZAP: 1,      // Zapping a specific note (primary use case)
+    PROFILE_ZAP: 2    // Zapping a user profile (future use - commented out in UI)
+};
+
 export const NoteRequestTypeNames = {
     [NoteRequestType.FOLLOWING]: 'Following',
     [NoteRequestType.SPECIFIC_USER]: 'Specific User',

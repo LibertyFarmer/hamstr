@@ -40,16 +40,46 @@ $: logs = $currentOperationLogs || [];
 $: packetInfo = logs.reduce((latest, log) => {
     // For requests
     const responseMatch = log.message.match(/Type=RESPONSE, Seq=(\d+)\/(\d+)/);
-    // For note ACK confirmations
+    // For note ACK confirmations  
     const ackMatch = log.message.match(/Type=ACK, Content=ACK\|(\d+)/);
     // For getting total packet count from sending message
     const noteMatch = log.message.match(/Type=NOTE, Seq=\d+\/(\d+)/);
+    
+    // NEW: Handle ZAP packet types
+    const zapMatch = log.message.match(/Type=ZAP_KIND9734_REQUEST, Seq=\d+\/(\d+)/);
+    const nwcMatch = log.message.match(/Type=NWC_PAYMENT_REQUEST, Seq=\d+\/(\d+)/);
+    
+    // NEW: Handle zap ACK confirmations (from translated messages)
+    const zapAckMatch = log.message.match(/Zap Packet (\d+) confirmed/);
+    const nwcAckMatch = log.message.match(/Payment Command Packet (\d+) confirmed/);
 
     if (noteMatch) {
         return { ...latest, total: parseInt(noteMatch[1]) };
     }
+    if (zapMatch) {
+        return { ...latest, total: parseInt(zapMatch[1]) };
+    }
+    if (nwcMatch) {
+        return { ...latest, total: parseInt(nwcMatch[1]) };
+    }
     if (ackMatch) {
         const current = parseInt(ackMatch[1]);
+        return {
+            current,
+            total: latest.total,
+            percent: latest.total ? (current / latest.total) * 100 : 0
+        };
+    }
+    if (zapAckMatch) {
+        const current = parseInt(zapAckMatch[1]);
+        return {
+            current,
+            total: latest.total,
+            percent: latest.total ? (current / latest.total) * 100 : 0
+        };
+    }
+    if (nwcAckMatch) {
+        const current = parseInt(nwcAckMatch[1]);
         return {
             current,
             total: latest.total,
