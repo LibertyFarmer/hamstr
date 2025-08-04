@@ -120,121 +120,197 @@
   });
 
   async function handleSubmitNote(noteData) {
-    try {
-      console.log('Sending note data:', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(noteData)
-      });
+  try {
+    console.log('Sending note data:', noteData);
 
+    currentOperationLogs.set([]);
+    progressDrawerOpen = true;
+    showWriteNoteModal = false;
+    isSending = true;
+    
+    // Track the interaction type for database updates
+    let interactionType = null;
+    let targetNoteId = null;
+    
+    if (noteData.note_type === 2) { // REPLY
+      interactionType = 'replied';
+      targetNoteId = noteData.reply_to;
+    } else if (noteData.note_type === 4) { // REPOST/BOOST  
+      interactionType = 'boosted';
+      targetNoteId = noteData.repost_id;
+    } else if (noteData.note_type === 3) { // QUOTE
+      interactionType = 'quoted'; 
+      targetNoteId = noteData.reply_to;
+    }
+    
+    console.log('Interaction tracking:', { interactionType, targetNoteId });
+    
+    const response = await fetch(`${$baseURL}/api/send_note`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(noteData)
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.message || 'Failed to send note');
+    }
+
+    if (result.success) {
       currentOperationLogs.set([]);
-      progressDrawerOpen = true;
-      showWriteNoteModal = false;
-      // Fixed: removed incorrect showZapModal declaration from here
-      isSending = true;
+      progressDrawerOpen = false;
       
-      const response = await fetch(`${$baseURL}/api/send_note`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(noteData)
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.message || 'Failed to send note');
+      // NEW: Update interaction status if this was a reply/boost/quote
+      if (interactionType && targetNoteId) {
+        console.log(`Updating ${interactionType} status for note ${targetNoteId}`);
+        try {
+          const updateResponse = await fetch(`${$baseURL}/api/notes/${targetNoteId}/interaction`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ type: interactionType })
+          });
+          
+          if (updateResponse.ok) {
+            // Dispatch event to update UI immediately
+            window.dispatchEvent(new CustomEvent('noteInteractionUpdated', {
+              detail: { 
+                noteId: targetNoteId, 
+                interactionType: interactionType 
+              }
+            }));
+            
+            console.log(`Note marked as ${interactionType} in database and UI updated`);
+          } else {
+            console.error('Failed to update interaction status in database');
+          }
+        } catch (dbError) {
+          console.error(`Error updating ${interactionType} status:`, dbError);
+        }
       }
-
-      if (result.success) {
-        const notesResponse = await fetch(`${$baseURL}/api/notes`);
-        if (!notesResponse.ok) throw new Error('Failed to fetch updated notes');
+      
+      // Refresh notes list
+      const notesResponse = await fetch(`${$baseURL}/api/notes`);
+      if (notesResponse.ok) {
         const notesData = await notesResponse.json();
-        
         window.dispatchEvent(new CustomEvent('notesUpdated', { 
           detail: notesData 
         }));
-
-        await new Promise(resolve => setTimeout(resolve, 300));
-        currentOperationLogs.set([]);
-        progressDrawerOpen = false;
-        
-        await new Promise(resolve => setTimeout(resolve, 300));
-        toastMessage = 'Note successfully sent';
-        toastType = 'success';
-      } else {
-        throw new Error(result.message || 'Failed to send note');
       }
-
-    } catch (err) {
-      console.error("Error sending note:", err);
-      currentOperationLogs.set([]);
-      progressDrawerOpen = false;
-      toastMessage = `Error: ${err.message}`;
-      toastType = 'error';
-
-    } finally {
-      isSending = false;
-      showToast = true;
-      currentOperationLogs.set([]);
-      setTimeout(() => {
-        showToast = false;
-      }, 3000);
+      
+      await new Promise(resolve => setTimeout(resolve, 300));
+      toastMessage = 'Note successfully sent';
+      toastType = 'success';
+    } else {
+      throw new Error(result.message || 'Failed to send note');
     }
+
+  } catch (err) {
+    console.error("Error sending note:", err);
+    currentOperationLogs.set([]);
+    progressDrawerOpen = false;
+    toastMessage = `Error: ${err.message}`;
+    toastType = 'error';
+
+  } finally {
+    isSending = false;
+    showToast = true;
+    currentOperationLogs.set([]);
+    setTimeout(() => {
+      showToast = false;
+    }, 3000);
   }
+}
 
   async function handleSubmitZap(zapData) {
-    try {
-      console.log('Sending zap data:', zapData);
+  try {
+    console.log('Sending zap data:', zapData);
 
-      currentOperationLogs.set([]);
-      progressDrawerOpen = true;
-      showZapModal = false;
-      isSending = true;
-      
-      const response = await fetch(`${$baseURL}/api/send_zap`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(zapData)
-      });
+    currentOperationLogs.set([]);
+    progressDrawerOpen = true;
+    showZapModal = false;
+    isSending = true;
+    
+    // Track which note is being zapped
+    const zapNoteId = zapData.note_id;
+    
+    const response = await fetch(`${$baseURL}/api/send_zap`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(zapData)
+    });
 
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.message || 'Failed to send zap');
-      }
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.message || 'Failed to send zap');
+    }
 
-      if (result.success) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        currentOperationLogs.set([]);
-        progressDrawerOpen = false;
-        
-        await new Promise(resolve => setTimeout(resolve, 300));
-        toastMessage = '⚡ Zap sent successfully!';
-        toastType = 'success';
-      } else {
-        throw new Error(result.message || 'Failed to send zap');
-      }
-
-    } catch (err) {
-      console.error("Error sending zap:", err);
+    if (result.success) {
+      await new Promise(resolve => setTimeout(resolve, 300));
       currentOperationLogs.set([]);
       progressDrawerOpen = false;
-      toastMessage = `Error: ${err.message}`;
-      toastType = 'error';
-
-    } finally {
-      isSending = false;
-      showToast = true;
-      currentOperationLogs.set([]);
-      setTimeout(() => {
-        showToast = false;
-      }, 3000);
+      
+      // NEW: Update database to mark note as zapped
+      if (zapNoteId) {
+        console.log(`Updating zapped status for note ${zapNoteId}`);
+        try {
+          const updateResponse = await fetch(`${$baseURL}/api/notes/${zapNoteId}/interaction`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ type: 'zapped' })
+          });
+          
+          if (updateResponse.ok) {
+            // Dispatch event to update UI immediately
+            window.dispatchEvent(new CustomEvent('noteInteractionUpdated', {
+              detail: { 
+                noteId: zapNoteId, 
+                interactionType: 'zapped' 
+              }
+            }));
+            
+            console.log('Note marked as zapped in database and UI updated');
+          } else {
+            console.error('Failed to update zap status in database');
+          }
+        } catch (dbError) {
+          console.error('Error updating zap status in database:', dbError);
+          // Don't fail the whole operation for this
+        }
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 300));
+      toastMessage = '⚡ Zap sent successfully!';
+      toastType = 'success';
+    } else {
+      throw new Error(result.message || 'Failed to send zap');
     }
+
+  } catch (err) {
+    console.error("Error sending zap:", err);
+    currentOperationLogs.set([]);
+    progressDrawerOpen = false;
+    toastMessage = `Error: ${err.message}`;
+    toastType = 'error';
+
+  } finally {
+    isSending = false;
+    showToast = true;
+    currentOperationLogs.set([]);
+    setTimeout(() => {
+      showToast = false;
+    }, 3000);
   }
+}
 </script>
 
 {#if showToast}

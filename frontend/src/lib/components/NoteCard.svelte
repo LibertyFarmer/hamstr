@@ -1,8 +1,12 @@
 <script>
+  import { onMount } from 'svelte';
   import { formatTimeAgo, timeUpdater } from '$lib/utils/timeUtils';
-  import { NoteType, ZapType } from '$lib/utils/enums'; 
+  import { NoteType, ZapType } from '$lib/utils/enums';
+  import { baseURL } from '$lib/stores/baseUrlStore';
   
   export let note;
+  
+  $: apiBaseUrl = $baseURL;
   
   function shortenNpub(npub) {
     if (!npub) return '';
@@ -20,7 +24,9 @@
   // Show Lightning address if available
   $: hasLightning = note.lud16 ? true : false;
 
+  // ENHANCED: Update interaction handlers WITHOUT immediate local updates
   function handleReply() {
+    // Don't update local state immediately - wait for actual database confirmation
     console.log('Setting up reply to note:', note);
     const replyContext = {
       noteId: note.id,
@@ -40,6 +46,7 @@
   }
 
   function handleRepost() {
+    // Don't update local state immediately - wait for actual database confirmation
     console.log('Setting up repost for note:', note);
     const repostContext = {
       noteId: note.id,
@@ -59,6 +66,7 @@
   }
 
   function handleQuote() {
+    // Don't update local state immediately - wait for actual database confirmation
     console.log('Setting up quote for note:', note);
     const quoteContext = {
       noteId: note.id,
@@ -120,6 +128,9 @@
       return;
     }
 
+    // Don't update zapped status immediately since zaps can fail
+    // Let the successful zap completion handle the database update
+    
     console.log('Setting up note zap for note:', note);
     const zapContext = {
       // Note-specific context for kind 9734 zap note - INCLUDES note ID
@@ -138,6 +149,27 @@
       }
     }));
   }
+
+  // NEW: Add to onMount function to listen for real-time updates
+  onMount(() => {
+    // Listen for interaction updates
+    const handleInteractionUpdate = (event) => {
+      const { noteId, interactionType } = event.detail;
+      if (note.id === noteId) {
+        // Update the note object in real-time
+        note[interactionType] = true;
+        // Trigger Svelte reactivity
+        note = note;
+        console.log(`Note ${noteId} marked as ${interactionType}`);
+      }
+    };
+    
+    window.addEventListener('noteInteractionUpdated', handleInteractionUpdate);
+    
+    return () => {
+      window.removeEventListener('noteInteractionUpdated', handleInteractionUpdate);
+    };
+  });
 </script>
 
 <!-- Note Card Container -->
@@ -197,81 +229,110 @@
     </p>
   </div>
 
-  <!-- Action Buttons -->
+  <!-- Action Buttons with Interaction Status -->
   <div class="flex items-center justify-between pt-3 border-t border-gray-200 dark:border-gray-700">
-    <!-- Reply Button -->
+    <!-- Reply Button with Status -->
     <button 
       on:click={handleReply}
-      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-blue-500 dark:hover:text-blue-400 transition-colors group"
+      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-blue-500 dark:hover:text-blue-400 transition-colors group relative"
       title="Reply"
     >
-      <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path 
-          d="M3 20l1.3-3.9A9 9 0 1 1 8.1 21L3 20z" 
-          stroke-width="2"
-        />
-      </svg>
+      <div class="relative">
+        <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path 
+            d="M3 20l1.3-3.9A9 9 0 1 1 8.1 21L3 20z" 
+            stroke-width="2"
+          />
+        </svg>
+        {#if note.replied}
+          <div class="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+        {/if}
+      </div>
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Reply</span>
     </button>
 
-    <!-- Repost Button -->
+    <!-- Repost/Boost Button with Status -->
     <button 
       on:click={handleRepost}
-      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-green-500 dark:hover:text-green-400 transition-colors group"
+      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-green-500 dark:hover:text-green-400 transition-colors group relative"
       title="Boost"
     >
-      <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path 
-          d="M17 1l4 4-4 4" 
-          stroke-width="2"
-        />
-        <path 
-          d="M3 11V9a4 4 0 0 1 4-4h14" 
-          stroke-width="2"
-        />
-        <path 
-          d="M7 23l-4-4 4-4" 
-          stroke-width="2"
-        />
-        <path 
-          d="M21 13v2a4 4 0 0 1-4 4H3" 
-          stroke-width="2"
-        />
-      </svg>
+      <div class="relative">
+        <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path 
+            d="M17 1l4 4-4 4" 
+            stroke-width="2"
+          />
+          <path 
+            d="M3 11V9a4 4 0 0 1 4-4h14" 
+            stroke-width="2"
+          />
+          <path 
+            d="M7 23l-4-4 4-4" 
+            stroke-width="2"
+          />
+          <path 
+            d="M21 13v2a4 4 0 0 1-4 4H3" 
+            stroke-width="2"
+          />
+        </svg>
+        {#if note.boosted}
+          <div class="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+        {/if}
+      </div>
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Boost</span>
     </button>
 
-    <!-- Quote Button -->
+    <!-- Quote Button with Status -->
     <button 
       on:click={handleQuote}
-      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-purple-500 dark:hover:text-purple-400 transition-colors group"
+      class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-purple-500 dark:hover:text-purple-400 transition-colors group relative"
       title="Quote"
     >
-      <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path 
-          d="M17.5 10H6.5C5.11929 10 4 11.1193 4 12.5V17.5C4 18.8807 5.11929 20 6.5 20H17.5C18.8807 20 20 18.8807 20 17.5V12.5C20 11.1193 18.8807 10 17.5 10Z" 
-          stroke-width="2"
-        />
-        <path 
-          d="M14.5 4H7.5C6.11929 4 5 5.11929 5 6.5V11.5" 
-          stroke-width="2" 
-          stroke-linecap="round"
-        />
-      </svg>
+      <div class="relative">
+        <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path 
+            d="M17.5 10H6.5C5.11929 10 4 11.1193 4 12.5V17.5C4 18.8807 5.11929 20 6.5 20H17.5C18.8807 20 20 18.8807 20 17.5V12.5C20 11.1193 18.8807 10 17.5 10Z" 
+            stroke-width="2"
+          />
+          <path 
+            d="M14.5 4H7.5C6.11929 4 5 5.11929 5 6.5V11.5" 
+            stroke-width="2" 
+            stroke-linecap="round"
+          />
+        </svg>
+        {#if note.quoted}
+          <div class="absolute -top-1 -right-1 w-3 h-3 bg-purple-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+        {/if}
+      </div>
       <span class="hidden sm:inline text-sm sm:text-base font-bold">Quote</span>
     </button>
 
-    <!-- Zap Button (Note Zap) -->
+    <!-- Zap Button with Enhanced Status Display -->
     {#if hasLightning}
       <button 
         on:click={handleNoteZap}
-        class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-yellow-500 dark:hover:text-yellow-400 transition-colors group"
+        class="flex items-center p-2 space-x-1 sm:space-x-2 hover:text-yellow-500 dark:hover:text-yellow-400 transition-colors group relative"
+        class:text-yellow-500={note.zapped}
+        class:dark:text-yellow-400={note.zapped}
         title="Zap Note"
       >
-        <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
-        </svg>
-        <span class="hidden sm:inline text-sm sm:text-base font-bold">⚡ Zap</span>
+        <div class="relative">
+          <svg class="w-6 h-6 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
+          </svg>
+          {#if note.zapped}
+            <!-- Small indicator dot for zapped notes -->
+            <div class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+          {/if}
+        </div>
+        <span class="hidden sm:inline text-sm sm:text-base font-bold">
+          {#if note.zapped}
+            ⚡ Zapped
+          {:else}
+            ⚡ Zap
+          {/if}
+        </span>
       </button>
     {/if}
 

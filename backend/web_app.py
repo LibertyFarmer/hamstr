@@ -49,6 +49,11 @@ def init_db():
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     try:
+        # First check if table exists and get current columns
+        c.execute("PRAGMA table_info(notes)")
+        existing_columns = {row[1] for row in c.fetchall()}
+        
+        # Create table if it doesn't exist with original schema
         c.execute('''CREATE TABLE IF NOT EXISTS notes
                      (id TEXT PRIMARY KEY,
                       content TEXT,
@@ -58,7 +63,25 @@ def init_db():
                       lud16 TEXT,
                       is_local INTEGER,
                       stored_at INTEGER)''')
+        
+        # Add new columns if they don't exist
+        new_columns = {
+            'zapped': 'INTEGER DEFAULT 0',
+            'replied': 'INTEGER DEFAULT 0', 
+            'boosted': 'INTEGER DEFAULT 0',
+            'quoted': 'INTEGER DEFAULT 0'
+        }
+        
+        for column_name, column_def in new_columns.items():
+            if column_name not in existing_columns:
+                try:
+                    c.execute(f'ALTER TABLE notes ADD COLUMN {column_name} {column_def}')
+                    socketio_logger.info(f"[DATABASE] Added column: {column_name}")
+                except Exception as col_error:
+                    socketio_logger.error(f"[DATABASE] Error adding column {column_name}: {col_error}")
+        
         conn.commit()
+        socketio_logger.info("[DATABASE] Database initialization completed successfully")
     except Exception as e:
         socketio_logger.error(f"[DATABASE] Error initializing database: {e}")
     finally:
@@ -69,6 +92,51 @@ init_db()
 
 
 # API Routes
+@app.route('/api/notes/<note_id>/interaction', methods=['POST'])
+
+def update_note_interaction(note_id):
+    """Update interaction status for a note (zapped, replied, boosted, quoted)"""
+    try:
+        data = request.get_json()
+        interaction_type = data.get('type')  # 'zapped', 'replied', 'boosted', 'quoted'
+        
+        if interaction_type not in ['zapped', 'replied', 'boosted', 'quoted']:
+            return jsonify({
+                "success": False,
+                "message": "Invalid interaction type"
+            }), 400
+        
+        db_path = os.path.join(BASE_DIR, 'data', 'notes.db')
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # Update the specific interaction column
+        c.execute(f"UPDATE notes SET {interaction_type} = 1 WHERE id = ?", (note_id,))
+        
+        if c.rowcount == 0:
+            conn.close()
+            return jsonify({
+                "success": False,
+                "message": "Note not found"
+            }), 404
+        
+        conn.commit()
+        conn.close()
+        
+        socketio_logger.info(f"[DATABASE] Updated {interaction_type} status for note {note_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Note {interaction_type} status updated"
+        })
+        
+    except Exception as e:
+        socketio_logger.error(f"[DATABASE] Error updating note interaction: {e}")
+        return jsonify({
+            "success": False,
+            "message": f"Database error: {str(e)}"
+        }), 500
+
 @app.route('/api/notes')
 def get_notes():
     page = request.args.get('page', 1, type=int)
@@ -85,41 +153,87 @@ def get_notes_from_db(page=1, limit=10):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     
-    # First get total count
-    c.execute("SELECT COUNT(*) FROM notes WHERE is_local = 0")
-    total_count = c.fetchone()[0]
-    
-    # Then get paginated results
-    c.execute("""
-        SELECT id, content, created_at, pubkey, display_name, lud16, is_local 
-        FROM notes 
-        WHERE is_local = 0 
-        ORDER BY created_at DESC 
-        LIMIT ? OFFSET ?
-    """, (limit, offset))
-    
-    notes = c.fetchall()
-    conn.close()
-    
-    has_more = (offset + limit) < total_count
-    
-    return {
-        "notes": [{
-            "id": note[0],
-            "content": note[1],
-            "created_at": note[2],
-            "pubkey": note[3],
-            "display_name": note[4],
-            "lud16": note[5],
-            "formatted_date": datetime.fromtimestamp(note[2]).strftime('%Y-%m-%d %H:%M:%S')
-        } for note in notes],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total_count,
-            "has_more": has_more
+    try:
+        # First get total count
+        c.execute("SELECT COUNT(*) FROM notes WHERE is_local = 0")
+        total_count = c.fetchone()[0]
+        
+        # Check which columns exist in the database
+        c.execute("PRAGMA table_info(notes)")
+        existing_columns = {row[1] for row in c.fetchall()}
+        
+        # Build query based on available columns
+        base_columns = "id, content, created_at, pubkey, display_name, lud16, is_local"
+        interaction_columns = []
+        
+        if 'zapped' in existing_columns:
+            interaction_columns.append('zapped')
+        if 'replied' in existing_columns:
+            interaction_columns.append('replied')
+        if 'boosted' in existing_columns:
+            interaction_columns.append('boosted')
+        if 'quoted' in existing_columns:
+            interaction_columns.append('quoted')
+        
+        if interaction_columns:
+            columns = base_columns + ", " + ", ".join(interaction_columns)
+        else:
+            columns = base_columns
+              
+
+        # Execute query with available columns
+        c.execute(f"""
+            SELECT {columns}
+            FROM notes 
+            WHERE is_local = 0 
+            ORDER BY created_at DESC 
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        
+        notes = []
+        for row in c.fetchall():
+            note_dict = {
+                "id": row[0],
+                "content": row[1],
+                "created_at": row[2],
+                "pubkey": row[3],
+                "display_name": row[4],
+                "lud16": row[5],
+                "is_local": row[6],
+                # Default values for interaction columns if they don't exist
+                "zapped": bool(row[7]) if len(row) > 7 and 'zapped' in existing_columns else False,
+                "replied": bool(row[8]) if len(row) > 8 and 'replied' in existing_columns else False,
+                "boosted": bool(row[9]) if len(row) > 9 and 'boosted' in existing_columns else False,
+                "quoted": bool(row[10]) if len(row) > 10 and 'quoted' in existing_columns else False
+            }
+            notes.append(note_dict)
+                
+        has_more = (offset + limit) < total_count
+        
+        return {
+            "notes": notes,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total_count,
+                "has_more": has_more
+            }
         }
-    }
+        
+    except Exception as e:
+        socketio_logger.error(f"[DATABASE] Error in get_notes_from_db: {e}")
+        # Return empty result on error to prevent JSON parsing issues
+        return {
+            "notes": [],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": 0,
+                "has_more": False
+            }
+        }
+    finally:
+        conn.close()
 
 def check_radio_status(operation_type):
     global radio_operation_in_progress
