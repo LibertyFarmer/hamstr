@@ -155,21 +155,25 @@ class Server:
         """Handle successful payment confirmation from client"""
         logging.info("[ZAP] Payment successful - Lightning payment completed")
         
-        # Send success response to client (payment worked)
+        # Send success response to client
         await self.send_zap_final_response(session, True)
         
-        # Just disconnect - cleanup happens automatically when session ends
+        # Set disconnecting state BEFORE sending disconnect
+        session.state = ModemState.DISCONNECTING
+        
+        # Now send disconnect
+        logging.info("[ZAP] Sending disconnect to client")
         self.core.send_disconnect(session)
-        logging.info("[ZAP] Zap success process completed, disconnected from client")
 
     async def handle_zap_failure(self, session):
-        """Handle payment failure - don't publish, just disconnect"""
-        logging.warning("[ZAP] Payment failed - not publishing zap note")
+        """Handle payment failure"""
+        logging.warning("[ZAP] Payment failed")
         
         # Send failure response to client
-        await self.send_zap_final_response(session, False)  # This will send ZAP_FAILED_PUBLISH
+        await self.send_zap_final_response(session, False)
         
-        # Disconnect
+        # Now send disconnect
+        logging.info("[ZAP] Sending disconnect to client")
         self.core.send_disconnect(session)
 
     async def send_zap_final_response(self, session, zap_published):

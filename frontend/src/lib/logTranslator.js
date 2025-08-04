@@ -41,6 +41,67 @@ const logTranslations = {
     return `Starting transmission.`;
   },
   
+  // Zap Flow - Phase 1: Kind 9734 Zap Request
+  '\\[CLIENT\\] Sending kind 9734 zap note via ZAP_KIND9734_REQUEST': 'Sending Kind 9734 Zap Note',
+  '\\[CLIENT\\] Preparing to send kind 9734 zap note: (\\d+) sats to ([^\\s]+)': (match) => {
+    return `Preparing to send ${match[2]} ${match[1]} sats`;
+  },
+  '\\[CLIENT\\] Added e tag for note zap: ([a-f0-9]{8})[a-f0-9]*': (match) => {
+    return `Zapping note id: ${match[1]}...`;
+  },
+  '\\[CLIENT\\] Zap packets and DONE sent successfully': 'All Zap packets and DONE sent. Waiting on ACK',
+  '\\[PACKET\\] Sending message: MessageType\\.ZAP_KIND9734_REQUEST to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
+    return `Starting zap transmission...`;
+  },
+  '\\[CONTROL\\] Sending packet: Type=ZAP_KIND9734_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
+    return `Sending Zap Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
+  },
+
+  // Zap Flow - Invoice Generation
+  '\\[CLIENT\\] READY sent, waiting for invoice response': 'Generating Lightning invoice...',
+  '\\[CLIENT\\] Invoice received, creating payment': 'Invoice received, preparing payment...',
+
+  // Zap Flow - Phase 2: NWC Payment
+  '\\[CLIENT\\] Creating encrypted NWC payment command': 'Creating payment command...',
+  '\\[CLIENT\\] Sending NWC payment command via radio': 'Sending payment to wallet...',
+  '\\[PACKET\\] Sending message: MessageType\\.NWC_PAYMENT_REQUEST to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
+    return `Sending payment command...`;
+  },
+  '\\[CONTROL\\] Sending packet: Type=NWC_PAYMENT_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
+    return `Sent Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
+  },
+
+  // Zap Flow - Invoice Response
+  '\\[CLIENT\\] Received invoice response: .*': 'Lightning invoice received',
+  '\\[CLIENT\\] Lightning Invoice: .*': 'Processing Lightning invoice...',
+  
+  // Zap Flow - NWC Command Flow
+  '\\[CLIENT\\] Sent READY for NWC command transmission': 'Ready to send payment command',
+  '\\[CLIENT\\] Server READY received, sending NWC command': 'Sending payment command to wallet...',
+  '\\[CLIENT\\] NWC command sent, waiting for payment response': 'Waiting for wallet response...',
+  '\\[CLIENT\\] Sent READY for payment response': 'Ready for payment confirmation',
+
+  // Zap Flow - Payment Response
+  '\\[CLIENT\\] Server READY received for payment response': 'Wallet processing payment...',
+  '\\[CLIENT\\] Payment successful! Zap completed': '⚡ Zap sent successfully!',
+  '\\[CLIENT\\] Payment failed': '❌ Payment failed',
+  '\\[CLIENT\\] ⚡ Zap payment successful! Sending success confirmation to server': '⚡ Payment confirmed! Publishing zap...',
+
+  // Zap Flow - Final Confirmation
+  '\\[CLIENT\\] Confirming zap success to server': 'Confirming zap completion...',
+  '\\[CLIENT\\] Server final message received': 'Zap published to NOSTR!',
+  '\\[CLIENT\\] Waiting for server disconnect...': 'Finalizing zap...',
+  '\\[CLIENT\\] Zap session completed successfully': '⚡ Zap completed successfully!',
+  '\\[CONTROL\\] Sending packet: Type=ZAP_SUCCESS_CONFIRM, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Confirming zap success...',
+
+  // Zap Flow - Ready states
+  '\\[CLIENT\\] Received READY from server, sending READY': 'Ready to receive invoice',
+  '\\[CONTROL\\] Received control: Type=READY, Content=ZAP_PUBLISHED': '⚡ Zap live on NOSTR!',
+  
+  // Zap Flow - Disconnect handling
+  '\\[CONTROL\\] Received control: Type=DISCONNECT, Content=Disconnect': 'Server requesting disconnect',
+  '\\[CLIENT\\] Received disconnect from server, sending ACK': 'Confirming disconnect...',
+  
   // Packet handling and progress
   '\\[PACKET\\] DONE packet sent': 'Sending completion signal...',
   '\\[CONTROL\\] Received DONE_ACK, note transmission complete': 'Note transmission complete!',
