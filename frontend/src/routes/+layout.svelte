@@ -230,10 +230,13 @@
   try {
     console.log('Sending zap data:', zapData);
 
+    // NEW: Dispatch zap operation started event
+    window.dispatchEvent(new CustomEvent('zapOperationStarted'));
+
     currentOperationLogs.set([]);
     progressDrawerOpen = true;
     showZapModal = false;
-    isSending = true;
+    isSending = true;  // Keep this as-is for existing functionality
     
     // Track which note is being zapped
     const zapNoteId = zapData.note_id;
@@ -303,7 +306,10 @@
     toastType = 'error';
 
   } finally {
-    isSending = false;
+    // NEW: Dispatch zap operation ended event
+    window.dispatchEvent(new CustomEvent('zapOperationEnded'));
+    
+    isSending = false;  // Keep this as-is
     showToast = true;
     currentOperationLogs.set([]);
     setTimeout(() => {
@@ -311,6 +317,7 @@
     }, 3000);
   }
 }
+
 </script>
 
 {#if showToast}

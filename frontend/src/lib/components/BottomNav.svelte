@@ -15,6 +15,9 @@
   export let isSending = false;
   export let settingsDrawerHidden = true;
   
+  // NEW: Add zapping detection state
+  let isZapping = false;
+  
   let noteRequestCount = 1;
   let showToast = false;
   let toastMessage = '';
@@ -33,7 +36,18 @@
     await fetchSettings();
 
     window.addEventListener('requestTypeSelected', handleRequestTypeSelected);
-    window.addEventListener('settingsUpdated', fetchSettings);  // Add this
+    window.addEventListener('settingsUpdated', fetchSettings);
+    
+    // NEW: Listen for zap operations
+    window.addEventListener('zapOperationStarted', () => {
+      isZapping = true;
+      console.log('Zap operation detected - switching to zapping indicator');
+    });
+    
+    window.addEventListener('zapOperationEnded', () => {
+      isZapping = false;
+      console.log('Zap operation ended - back to normal indicator');
+    });
     
     window.bottomNavComponent = {
       handleRequestNotes
@@ -41,10 +55,12 @@
 
     return () => {
       window.removeEventListener('requestTypeSelected', handleRequestTypeSelected);
-      window.removeEventListener('settingsUpdated', fetchSettings);  // Add this
+      window.removeEventListener('settingsUpdated', fetchSettings);
+      window.removeEventListener('zapOperationStarted');
+      window.removeEventListener('zapOperationEnded');
       delete window.bottomNavComponent;
     };
-});
+  });
 
   function createToastMessage(requestType, count, searchText = '') {
     if (count === 0) {
@@ -82,7 +98,7 @@
         default:
             return `Retrieved ${count} note${count !== 1 ? 's' : ''}`;
     }
-}
+  }
 
   function handleRequestTypeSelected(event) {
     const { type } = event.detail;
@@ -134,7 +150,7 @@
 
   async function refreshRecentNotes() {
     try {
-      const response = await fetch(`${apiBaseUrl}/`);
+      const response = await fetch(`${apiBaseUrl}/api/notes`);
       if (!response.ok) throw new Error('Failed to fetch recent notes');
       const notes = await response.json();
       window.dispatchEvent(new CustomEvent('notesUpdated', { detail: notes }));
@@ -146,32 +162,31 @@
 
   async function handleRequestNotes(requestType, searchText = '') {
     if ($isRequestingNotes || isProcessing) {
-        console.log('Already requesting notes, ignoring');
+        console.log('Request already in progress, skipping');
         return;
     }
 
-    isProcessing = true;
-    isRequestingNotes.set(true);
-    console.log('Starting note request process');
-    progressDrawerOpen = true;
-
     try {
-        console.log(`Making request to ${apiBaseUrl}/request_notes/${noteRequestCount}`);
+        isRequestingNotes.set(true);
+        isProcessing = true;
+        
+        const payload = {
+            requestType: requestType,
+            searchText: searchText
+        };
+
+        console.log('Sending request with payload:', payload);
+        
         const response = await fetch(`${apiBaseUrl}/request_notes/${noteRequestCount}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                requestType: requestType,
-                count: noteRequestCount,
-                searchText: searchText
-            })
+            body: JSON.stringify(payload)
         });
-        
-        console.log('Response received:', response);
+
         const result = await response.json();
-        console.log('Response data:', result);
+        console.log('Request result:', result);
 
         if (response.ok) {
             if (!result.success) {
@@ -185,15 +200,9 @@
             }
             
             try {
-
-              // Get fresh notes when done
-                const notesResponse = await fetch(`${apiBaseUrl}/api/notes`);
-                const notesData = await notesResponse.json();
+                // FIXED: Add the missing notes refresh call
+                await refreshRecentNotes();
                 
-                window.dispatchEvent(new CustomEvent('notesUpdated', { 
-                    detail: notesData 
-                }));
-
                 dispatch('clearLogs');
                 await new Promise(resolve => setTimeout(resolve, 300));
                 progressDrawerOpen = false;
@@ -233,17 +242,63 @@
             showToast = false;
         }, 3000);
     }
-}
-
-function handleWriteClick() {
-  if (isSending) {
-    progressDrawerOpen = !progressDrawerOpen;
-  } else {
-    openWriteNoteModal();
   }
-}
 
+  function handleWriteClick() {
+    if (isSending) {
+      progressDrawerOpen = !progressDrawerOpen;
+    } else {
+      openWriteNoteModal();
+    }
+  }
 </script>
+
+<!-- UPDATED: Black and white charging animation CSS -->
+<style>
+  @keyframes lightning-charge {
+    0% { 
+      background: linear-gradient(to top, transparent 0%, transparent 100%);
+    }
+    25% { 
+      background: linear-gradient(to top, #6b7280 0%, #6b7280 30%, transparent 30%);
+    }
+    50% { 
+      background: linear-gradient(to top, #4b5563 0%, #6b7280 60%, transparent 60%);
+    }
+    75% { 
+      background: linear-gradient(to top, #374151 0%, #4b5563 80%, transparent 80%);
+    }
+    100% { 
+      background: linear-gradient(to top, transparent 0%, transparent 100%);
+    }
+  }
+  
+  .lightning-charging {
+    animation: lightning-charge 2s ease-in-out infinite;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M7 2v11h3v9l7-12h-4l4-8z'/%3E%3C/svg%3E");
+    -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M7 2v11h3v9l7-12h-4l4-8z'/%3E%3C/svg%3E");
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+  }
+  
+  @keyframes lightning-glow {
+    0%, 100% { filter: drop-shadow(0 0 2px #6b7280); }
+    50% { filter: drop-shadow(0 0 6px #4b5563) drop-shadow(0 0 8px #6b7280); }
+  }
+  
+  .lightning-glow {
+    animation: lightning-glow 1.8s ease-in-out infinite;
+  }
+</style>
 
 {#if showToast}
   <Toast
@@ -263,33 +318,45 @@ function handleWriteClick() {
   </BottomNavItem>
 
   <BottomNavItem 
-  btnName="Fetch"
-  on:click={handleFetchClick}
-  disabled={isSending} 
-  class="relative"
->
-  {#if $isRequestingNotes}
-    <div class="w-6 h-6 mb-1 flex items-center justify-center cursor-pointer">
-      <Spinner size="6" color="gray" />
-    </div>
-  {:else}
-    <DownloadSolid class="w-6 h-6 mb-1 text-gray-500 dark:text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-500" />
-  {/if}
-</BottomNavItem>
+    btnName="Fetch"
+    on:click={handleFetchClick}
+    disabled={isSending} 
+    class="relative"
+  >
+    {#if $isRequestingNotes}
+      <div class="w-6 h-6 mb-1 flex items-center justify-center cursor-pointer">
+        <Spinner size="6" color="gray" />
+      </div>
+    {:else}
+      <DownloadSolid class="w-6 h-6 mb-1 text-gray-500 dark:text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-500" />
+    {/if}
+  </BottomNavItem>
 
-<BottomNavItem 
-  btnName="Write"
-  on:click={handleWriteClick}
-  disabled={$isRequestingNotes} 
-  class={isSending ? 'cursor-pointer' : ''}>
-  {#if isSending}
-    <div class="w-6 h-6 mb-1 flex items-center justify-center">
-      <Spinner size="6" color="gray" />
-    </div>
-  {:else}
-    <PenNibSolid class="w-6 h-6 mb-1 text-gray-500 dark:text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-500" />
-  {/if}
-</BottomNavItem>
+  <BottomNavItem 
+    btnName={isZapping ? "ZAPPING" : "Write"}
+    on:click={handleWriteClick}
+    disabled={$isRequestingNotes} 
+    class={isSending ? 'cursor-pointer' : ''}>
+    
+    {#if isSending && isZapping}
+      <!-- Lightning charging animation for zaps -->
+      <div class="w-6 h-6 mb-1 flex items-center justify-center relative lightning-glow">
+        <svg class="w-6 h-6 text-gray-600 dark:text-gray-300" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
+        </svg>
+        <!-- Charging fill effect -->
+        <div class="lightning-charging"></div>
+      </div>
+    {:else if isSending}
+      <!-- Regular spinner for note sending -->
+      <div class="w-6 h-6 mb-1 flex items-center justify-center">
+        <Spinner size="6" color="gray" />
+      </div>
+    {:else}
+      <!-- Normal pen icon -->
+      <PenNibSolid class="w-6 h-6 mb-1 text-gray-500 dark:text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-500" />
+    {/if}
+  </BottomNavItem>
 
   <BottomNavItem 
     btnName="Settings"
