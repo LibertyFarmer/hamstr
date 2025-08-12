@@ -47,25 +47,27 @@ def update_config(section, option, value):
             with open(server_callsign_path, 'w') as f:
                 config_to_update.write(f)
     elif section == 'TNC':
-        if option.startswith('CLIENT_') or option in ['client_host', 'client_port']:
+        if option.startswith('CLIENT_') or option in ['client_host', 'client_port'] or option in ['connection_type', 'serial_port', 'serial_speed']:
             # Handle client TNC settings - route to client_settings.ini
             config_to_update = configparser.ConfigParser()
             config_to_update.read(client_callsign_path)
             if not config_to_update.has_section('TNC'):
                 config_to_update.add_section('TNC')
             
-            # Always convert to lowercase for storage
+            # Always convert to lowercase for storage (except serial settings)
             if option == 'client_host' or option == 'CLIENT_HOST':
                 lower_option = 'client_host'
             elif option == 'client_port' or option == 'CLIENT_PORT':
                 lower_option = 'client_port'
+            elif option in ['connection_type', 'serial_port', 'serial_speed']:
+                lower_option = option  # Keep as-is for new serial settings
             else:
                 lower_option = option.lower()
                 
             config_to_update.set(section, lower_option, str(value))
             with open(client_callsign_path, 'w') as f:
                 config_to_update.write(f)
-        elif option.startswith('SERVER_'):
+        elif option.startswith('SERVER_') or option in ['server_host', 'server_port', 'CONNECTION_TYPE', 'SERIAL_PORT', 'SERIAL_SPEED']:
             # Handle server TNC settings - route to server_settings.ini
             config_to_update = configparser.ConfigParser()
             config_to_update.read(server_callsign_path)
@@ -140,6 +142,22 @@ def get_relay_list() -> List[str]:
 # Force reload client config to get latest values
 client_config.read([config_path, client_callsign_path])
 
+# Client TNC connection settings
+try:
+    CONNECTION_TYPE = client_config.get('TNC', 'connection_type')
+except:
+    CONNECTION_TYPE = 'tcp'  # Default to TCP
+
+try:
+    SERIAL_PORT = client_config.get('TNC', 'serial_port')
+except:
+    SERIAL_PORT = 'COM3'  # Default Windows port
+
+try:
+    SERIAL_SPEED = client_config.getint('TNC', 'serial_speed')
+except:
+    SERIAL_SPEED = 57600  # Default baud rate
+
 # Client settings from client_config
 try:
     CLIENT_HOST = client_config.get('TNC','client_host')
@@ -165,6 +183,22 @@ try:
     DEFAULT_NOTE_REQUEST_COUNT = client_config.getint('NOSTR', 'default_note_request_count')
 except:
     DEFAULT_NOTE_REQUEST_COUNT = config.getint('NOSTR', 'default_note_request_count', fallback=1)
+
+# Server TNC connection settings
+try:
+    SERVER_CONNECTION_TYPE = server_config.get('TNC', 'CONNECTION_TYPE')
+except:
+    SERVER_CONNECTION_TYPE = 'tcp'  # Default to TCP
+
+try:
+    SERVER_SERIAL_PORT = server_config.get('TNC', 'SERIAL_PORT')
+except:
+    SERVER_SERIAL_PORT = 'COM3'  # Default Windows port
+
+try:
+    SERVER_SERIAL_SPEED = server_config.getint('TNC', 'SERIAL_SPEED')
+except:
+    SERVER_SERIAL_SPEED = 57600  # Default baud rate
 
 # Server settings from server_config
 try:
@@ -201,8 +235,10 @@ NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
 NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
 READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
 MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
-NOSTR_RELAYS = get_relay_list()
 CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
+
+# Get NOSTR relays
+NOSTR_RELAYS = get_relay_list()
 
 # Load PTT-specific settings with default values if not found
 try:
@@ -224,3 +260,19 @@ try:
     PTT_ACK_SPACING = config.getfloat('PTT', 'ack_spacing')
 except (configparser.NoSectionError, configparser.NoOptionError):
     PTT_ACK_SPACING = 0.5  # Default ACK spacing in seconds
+
+# Add fallback values for any settings that may be missing
+try:
+    CONNECT_ACK_TIMEOUT = config.getint('GENERAL', 'connect_ack_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    CONNECT_ACK_TIMEOUT = ACK_TIMEOUT  # Use ACK_TIMEOUT as fallback
+
+try:
+    MESSAGE_REQUEST_BUFFER = config.getint('GENERAL', 'message_request_buffer')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    MESSAGE_REQUEST_BUFFER = 5  # Default buffer
+
+try:
+    PACKET_RESEND_DELAY = config.getfloat('GENERAL', 'packet_resend_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PACKET_RESEND_DELAY = 0.3  # Default resend delay

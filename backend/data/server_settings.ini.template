@@ -1,9 +1,20 @@
 [RADIO]
-server_callsign = (CALLSIGN, SSID)
+SERVER_CALLSIGN = (CALLSIGN, SSID)
 
 [TNC]
-server_host = localhost
-server_port = 8002
+# Connection type: tcp or serial
+CONNECTION_TYPE = tcp
+
+# TCP settings (when CONNECTION_TYPE = tcp)
+SERVER_HOST = localhost
+SERVER_PORT = 8002
+
+# Serial settings (when CONNECTION_TYPE = serial)
+# Windows: COM3, COM4, etc.
+# Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
+# macOS: /dev/cu.usbserial-*, /dev/cu.SLAB_USBtoUART, etc.
+SERIAL_PORT = COM3
+SERIAL_SPEED = 57600
 
 [NOSTR]
-relays = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol, wss://relay.getalby.com/v1
+RELAYS = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol, wss://relay.getalby.com/v1
