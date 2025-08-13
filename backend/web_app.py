@@ -7,6 +7,8 @@ import uuid
 import os
 import logging
 import importlib
+import platform
+import glob
 from models import NoteRequestType, NoteType, MessageType, ZapType
 from protocol_utils import compress_nostr_data, decompress_nostr_data, parse_callsign
 from socketio_logger import init_socketio, get_socketio_logger
@@ -702,7 +704,70 @@ def reload_config():
     """ Reload the settings by reloading the config module """
     importlib.reload(config)
 
+
+def get_available_serial_ports():
+    """Cross-platform function to detect available serial ports (same as server UI)."""
+    ports = []
+    
+    system = platform.system()
+    
+    if system == "Windows":
+        # Windows - only detect actually available COM ports
+        try:
+            import serial.tools.list_ports
+            available_ports = serial.tools.list_ports.comports()
+            ports = [port.device for port in available_ports]
+        except ImportError:
+            # Fallback if pyserial is not available - try common ports
+            for i in range(1, 20):
+                port_name = f"COM{i}"
+                try:
+                    import serial
+                    test_port = serial.Serial(port_name, timeout=0.1)
+                    test_port.close()
+                    ports.append(port_name)
+                except:
+                    pass
+    elif system == "Linux":
+        # Linux serial devices - only existing ones
+        possible_patterns = [
+            '/dev/ttyUSB*',
+            '/dev/ttyACM*', 
+            '/dev/ttyAMA*',
+            '/dev/serial/by-id/*'
+        ]
+        for pattern in possible_patterns:
+            ports.extend(glob.glob(pattern))
+    elif system == "Darwin":  # macOS
+        # macOS serial devices - only existing ones
+        possible_patterns = [
+            '/dev/cu.usbserial*',
+            '/dev/cu.usbmodem*',
+            '/dev/cu.SLAB_USBtoUART*',
+            '/dev/cu.wchusbserial*'
+        ]
+        for pattern in possible_patterns:
+            ports.extend(glob.glob(pattern))
+    
+    # Remove duplicates and sort
+    ports = list(set(ports))
+    ports.sort()
+    
+    # If no ports found, add some common defaults as placeholders
+    if not ports:
+        if system == "Windows":
+            ports = ["COM3", "COM4", "COM5"]
+        elif system == "Linux":
+            ports = ["/dev/ttyUSB0", "/dev/ttyACM0"]
+        elif system == "Darwin":
+            ports = ["/dev/cu.usbserial", "/dev/cu.SLAB_USBtoUART"]
+    
+    return ports
+
+
+
 #Settings Route(s)
+# Replace the existing @app.route('/api/settings', methods=['GET', 'POST']) function in web_app.py
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def settings():
@@ -730,10 +795,12 @@ def settings():
 
             reload_config()
             return jsonify({"message": "Settings updated and applied successfully!"})
-
-        # GET method
+        
+        # GET method - FIXED to properly read client settings
         reload_config()
         settings_dict = {}
+        
+        # Read from MAIN settings.ini (shared settings)
         for section in config.config.sections():
             for option in config.config.options(section):
                 key = f"{section.upper()}_{option.upper()}"
@@ -744,13 +811,34 @@ def settings():
                     option.lower() == 'hamstr_server'):
                     callsign, ssid = config.parse_tuple(value)
                     value = [callsign, ssid]
-                elif value.isdigit():
-                    value = int(value)
                 elif value.replace('.', '', 1).isdigit():
                     value = float(value)
+                elif value.isdigit():
+                    value = int(value)
 
                 settings_dict[key] = value
                 setting_sections[key] = (section, option)
+
+        # OVERRIDE with CLIENT-SPECIFIC settings from client_config
+        client_sections = ['RADIO', 'TNC', 'NOSTR']
+        for section_name in client_sections:
+            if config.client_config.has_section(section_name):
+                for option in config.client_config.options(section_name):
+                    key = f"{section_name.upper()}_{option.upper()}"
+                    value = config.client_config.get(section_name, option)
+                    
+                    # Handle callsign parsing
+                    if (option.lower().endswith('_callsign') or 
+                        option.lower() == 'hamstr_server'):
+                        callsign, ssid = config.parse_tuple(value)
+                        value = [callsign, ssid]
+                    elif value.replace('.', '', 1).isdigit():
+                        value = float(value)
+                    elif value.isdigit():
+                        value = int(value)
+
+                    settings_dict[key] = value
+                    setting_sections[key] = (section_name, option)
 
         return jsonify(settings_dict)
 
@@ -814,6 +902,25 @@ def clear_notes():
         return jsonify({
             "success": False,
             "message": f"Error clearing database: {str(e)}"
+        }), 500
+    
+
+@app.route('/api/serial_ports', methods=['GET'])
+def get_serial_ports():
+    """Get available serial ports for the current OS."""
+    try:
+        ports = get_available_serial_ports()
+        return jsonify({
+            "success": True,
+            "ports": ports,
+            "platform": platform.system()
+        })
+    except Exception as e:
+        logging.error(f"Error getting serial ports: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "ports": []
         }), 500
 
 #--- Begin Zap and NWC ----

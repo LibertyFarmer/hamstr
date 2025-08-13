@@ -3,3 +3,4 @@ cryptography==44.0.1
 brotli==1.1.0
 pyside6
 requests==2.31.0
+pyserial>=3.5

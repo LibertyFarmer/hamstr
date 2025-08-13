@@ -7,10 +7,8 @@ from networking import create_tnc_connection as networking_create_tnc_connection
 from protocol_utils import parse_callsign
 from socketio_logger import get_socketio_logger
 
-
 # SocketIO logger
 socketio_logger = get_socketio_logger()
-
 
 def create_tnc_connection(host, port):
     """Create a connection to the TNC."""
@@ -43,7 +41,6 @@ def reset_for_next_connection():
     logging.info("Resetting server for next connection")
     # Add any future necessary reset logic here
 
-
 class ConnectionManager:
     def __init__(self, is_server, core):
         self.is_server = is_server
@@ -68,8 +65,16 @@ class ConnectionManager:
             self._stopped = True
             if self.tnc_connection:
                 try:
-                    self.tnc_connection.shutdown(socket.SHUT_RDWR)
-                    self.tnc_connection.close()
+                    # Handle both socket and serial connection closing
+                    if hasattr(self.tnc_connection, 'shutdown'):  # TCP socket
+                        self.tnc_connection.shutdown(socket.SHUT_RDWR)
+                        self.tnc_connection.close()
+                    elif hasattr(self.tnc_connection, 'close'):  # Serial connection
+                        self.tnc_connection.close()
+                        logging.debug("Serial connection closed properly")
+                    else:
+                        # Fallback - just try to close
+                        self.tnc_connection.close()
                 except Exception as e:
                     socketio_logger.error(f"[TNC] Error closing TNC connection: {str(e)}")
                     logging.error(f"Error closing TNC connection: {str(e)}")
@@ -83,7 +88,7 @@ class ConnectionManager:
             return None
 
         if not self.tnc_connection:
-            socketio_logger.error("[TNC] NC connection is not established")
+            socketio_logger.error("[TNC] TNC connection is not established")
             logging.error("TNC connection is not established")
             return None
 
@@ -127,6 +132,17 @@ class ConnectionManager:
         
         logging.error(f"Failed to connect to {remote_callsign} after {config.RETRY_COUNT} attempts")
         socketio_logger.error(f"[SYSTEM] Failed to connect to {remote_callsign} after {config.RETRY_COUNT} attempts")
+        
+        # Ensure we properly clean up the connection on failure
+        if self.tnc_connection:
+            try:
+                if hasattr(self.tnc_connection, 'close'):
+                    self.tnc_connection.close()
+                    logging.debug("TNC connection closed after failed connect attempts")
+            except Exception as e:
+                logging.error(f"Error closing TNC connection after failed attempts: {e}")
+            self.tnc_connection = None
+        
         self.core.stop()
         return None
     
@@ -197,7 +213,10 @@ class ConnectionManager:
             logging.info(f"Cleaned up session: {session.id}")
         if session.tnc_connection:
             try:
-                session.tnc_connection.close()
+                # Handle both socket and serial connection closing
+                if hasattr(session.tnc_connection, 'close'):
+                    session.tnc_connection.close()
+                    logging.debug("Session TNC connection closed properly")
             except Exception as e:
                 socketio_logger.error(f"[TNC] Error closing TNC connection: {str(e)}")
                 logging.error(f"Error closing TNC connection: {str(e)}")
@@ -214,17 +233,6 @@ class ConnectionManager:
                 logging.info(f"Ready for new connections on {self.tnc_host}:{self.tnc_port} [CM]")
         else:
             logging.debug("TNC connection already exists, ready for new connections [CM]")
-
-    def handle_disconnect_request(self, session):
-        socketio_logger.info(f"[SESSION] Handling disconnect request for session: {session.id}")
-        logging.info(f"Handling disconnect request for session: {session.id}")
-        if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
-            session.state = ModemState.DISCONNECTING
-            self.core.send_ack(session)
-            self.cleanup_session(session)
-        else:
-            logging.info(f"[SYSTEM] Session {session.id} already disconnecting or disconnected")
-            logging.info(f"Session {session.id} already disconnecting or disconnected")
 
     def handle_incoming_connection(self):
         connection_attempt_time = None
@@ -332,27 +340,34 @@ class ConnectionManager:
                         else:
                             socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
                             logging.error(f"Failed to receive ACK for CONNECT_ACK from {source_callsign}")
-                            # Make sure to clean up the session here
+                            # Mark this as a failed connection attempt and clean up
                             try:
                                 self.cleanup_session(session)
-                            except Exception as cleanup_error:
-                                logging.error(f"Error during failed connection cleanup: {cleanup_error}")
+                            except Exception as e:
+                                logging.error(f"Error during failed connection cleanup: {e}")
                                 # Force cleanup even if exception occurred
                                 if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
                                     self.core.sessions.pop(session.id, None)
+                            finally:
+                                connection_attempt_time = None
+                                current_connect_session = None
+                                logging.info("Connection tracking cleared after failed ACK")
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
-                        # Make sure to clean up the session here
+                        # Clean up failed connection attempt
                         try:
                             self.cleanup_session(session)
-                        except Exception as cleanup_error:
-                            logging.error(f"Error during failed connection cleanup: {cleanup_error}")
+                        except Exception as e:
+                            logging.error(f"Error during failed CONNECT_ACK cleanup: {e}")
                             # Force cleanup even if exception occurred
                             if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
                                 self.core.sessions.pop(session.id, None)
-                    
-                    # Note: we don't disconnect here - we'll let the timeout handle it
+                        finally:
+                            connection_attempt_time = None
+                            current_connect_session = None
+                            logging.info("Connection tracking cleared after failed CONNECT_ACK send")
+                
                 elif source_callsign and msg_type == MessageType.DATA_REQUEST:
                     socketio_logger.info(f"[CONTROL] Received DATA_REQUEST from {source_callsign}")
                     logging.info(f"Received DATA_REQUEST from {source_callsign}")
@@ -370,44 +385,14 @@ class ConnectionManager:
                         session = self.create_session(source_callsign)
                         if session:
                             session.state = ModemState.CONNECTED
+                            session.last_activity = time.time()
                             self.core.sessions[session.id] = session
-                            socketio_logger.info(f"[SESSION] Recreated session for {source_callsign[0]}-{source_callsign[1]}")
-                    
-                    if session and session.state == ModemState.CONNECTED:
-                        # Add delay before sending READY
-                        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
-                        
-                        if self.core.send_ready(session):
-                            # Add delay after sending READY
-                            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
-                            
-                            if self.core.wait_for_ready(session):
-                                socketio_logger.info("[SYSTEM] Ready to send data")
-                                logging.info("Ready to send data")
-                                return session
-                            else:
-                                socketio_logger.error("[SYSTEM] Failed to receive READY from client")
-                                logging.error("Failed to receive READY from client")
-                                # Clean up the session
-                                try:
-                                    self.cleanup_session(session)
-                                except Exception as cleanup_error:
-                                    logging.error(f"Error during failed READY cleanup: {cleanup_error}")
-                        else:
-                            socketio_logger.error("[SYSTEM] Failed to send READY to client")
-                            logging.error("Failed to send READY to client")
-                            # Clean up the session
-                            try:
-                                self.cleanup_session(session)
-                            except Exception as cleanup_error:
-                                logging.error(f"Error during failed READY cleanup: {cleanup_error}")
+                            return session
                     else:
-                        socketio_logger.error("[SYSTEM] Received DATA_REQUEST for non-connected session")
-                        logging.error("Received DATA_REQUEST for non-existent or non-connected session")
-                elif source_callsign and msg_type is not None:
-                    logging.info(f"Received message: Type={msg_type}, Content={message[:50]}...")
-
-                # Only check connection timeout if we have a valid session
+                        session.last_activity = time.time()
+                        return session
+                
+                # Clean up sessions that are inactive (timeout)
                 if session and hasattr(session, 'last_activity') and time.time() - session.last_activity > config.CONNECTION_TIMEOUT:
                     logging.info(f"Connection timeout for {session.remote_callsign}")
                     try:

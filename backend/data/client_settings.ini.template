@@ -3,8 +3,19 @@ client_callsign = (YOUR_CLIENT_CALLSIGN, 0)
 hamstr_server = (SERVER_CALLSIGN, 0)
 
 [TNC]
+# Connection type: tcp or serial
+connection_type = tcp
+
+# TCP settings (when connection_type = tcp)
 client_host = localhost
 client_port = 8001
+
+# Serial settings (when connection_type = serial)
+# Windows: COM3, COM4, etc.
+# Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
+# macOS: /dev/cu.usbserial-*, /dev/cu.SLAB_USBtoUART, etc.
+serial_port = COM3
+serial_speed = 57600
 
 [NOSTR]
 default_note_request_count = 2
