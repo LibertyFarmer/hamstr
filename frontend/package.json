@@ -1,6 +1,6 @@
 {
   "name": "hamstr",
-  "version": "v0.00000210",
+  "version": "v0.00002100",
   "private": true,
   "scripts": {
     "dev": "vite dev",

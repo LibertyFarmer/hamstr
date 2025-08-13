@@ -8,6 +8,9 @@ import queue
 from datetime import datetime
 from typing import Optional
 import os
+import platform
+import glob
+import re
 
 # Add the backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
@@ -22,6 +25,65 @@ from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QAction
 
 import config
+
+def get_available_serial_ports():
+    """Cross-platform function to detect available serial ports."""
+    ports = []
+    
+    system = platform.system()
+    
+    if system == "Windows":
+        # Windows - only detect actually available COM ports
+        try:
+            import serial.tools.list_ports
+            available_ports = serial.tools.list_ports.comports()
+            ports = [port.device for port in available_ports]
+        except ImportError:
+            # Fallback if pyserial is not available - try common ports
+            for i in range(1, 20):
+                port_name = f"COM{i}"
+                try:
+                    import serial
+                    test_port = serial.Serial(port_name, timeout=0.1)
+                    test_port.close()
+                    ports.append(port_name)
+                except:
+                    pass
+    elif system == "Linux":
+        # Linux serial devices - only existing ones
+        possible_patterns = [
+            '/dev/ttyUSB*',
+            '/dev/ttyACM*', 
+            '/dev/ttyAMA*',
+            '/dev/serial/by-id/*'
+        ]
+        for pattern in possible_patterns:
+            ports.extend(glob.glob(pattern))
+    elif system == "Darwin":  # macOS
+        # macOS serial devices - only existing ones
+        possible_patterns = [
+            '/dev/cu.usbserial*',
+            '/dev/cu.usbmodem*',
+            '/dev/cu.SLAB_USBtoUART*',
+            '/dev/cu.wchusbserial*'
+        ]
+        for pattern in possible_patterns:
+            ports.extend(glob.glob(pattern))
+    
+    # Remove duplicates and sort
+    ports = list(set(ports))
+    ports.sort()
+    
+    # If no ports found, add some common defaults as placeholders
+    if not ports:
+        if system == "Windows":
+            ports = ["COM3", "COM4", "COM5"]
+        elif system == "Linux":
+            ports = ["/dev/ttyUSB0", "/dev/ttyACM0"]
+        elif system == "Darwin":
+            ports = ["/dev/cu.usbserial", "/dev/cu.SLAB_USBtoUART"]
+    
+    return ports
 
 # Custom signal emitter for thread-safe GUI updates
 class LogSignals(QObject):
@@ -53,21 +115,20 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("HAMSTR Server Settings")
         self.setModal(True)
-        self.setFixedSize(500, 400)
+        self.setFixedSize(600, 500)
         self.setStyleSheet("QLabel { font-weight: bold; }")
         
         layout = QFormLayout()
 
-        # Server Callsign and SSID (side by side like Svelte)
-        # Server Callsign and SSID (side by side like Svelte)
+        # Server Callsign and SSID
         callsign_layout = QHBoxLayout()
         
         self.callsign_input = QLineEdit()
-        self.callsign_input.setMaxLength(6)  # Max 6 characters
+        self.callsign_input.setMaxLength(6)
         self.callsign_input.setPlaceholderText("KK7AHK")
         self.callsign_input.setFixedWidth(80)
+        self.callsign_input.textChanged.connect(self.validate_callsign)
         
-        # Dash separator
         dash_label = QLabel("-")
         dash_label.setStyleSheet("font-weight: bold; color: #6b7280;")
         dash_label.setFixedWidth(15)
@@ -75,72 +136,87 @@ class SettingsDialog(QDialog):
         
         self.ssid_combo = QComboBox()
         self.ssid_combo.setFixedWidth(50)
-        # Populate SSID dropdown with 0-15
         for i in range(16):
             self.ssid_combo.addItem(str(i))
         
         callsign_layout.addWidget(self.callsign_input)
         callsign_layout.addWidget(dash_label)
         callsign_layout.addWidget(self.ssid_combo)
-        callsign_layout.addStretch()  # Push everything to the left
+        callsign_layout.addStretch()
         
         layout.addRow("Server Callsign:", callsign_layout)
         
-        # TNC Host
-        self.host_input = QLineEdit()
-        try:
-            host = config.server_config.get('TNC', 'SERVER_HOST', fallback='localhost')
-            self.host_input.setText(host)
-        except:
-            self.host_input.setText('localhost')
-        layout.addRow("TNC Host:", self.host_input)
+        # TNC Connection Type Selector
+        self.connection_type_combo = QComboBox()
+        self.connection_type_combo.addItem("TCP", "tcp")
+        self.connection_type_combo.addItem("Serial", "serial")
+        self.connection_type_combo.currentIndexChanged.connect(self.on_connection_type_changed)
+        layout.addRow("TNC Connection Type:", self.connection_type_combo)
         
-        # TNC Port
+        # TCP Settings Group
+        self.tcp_group = QWidget()
+        tcp_layout = QFormLayout()
+        
+        self.host_input = QLineEdit()
+        tcp_layout.addRow("TNC Host:", self.host_input)
+        
         self.port_input = QSpinBox()
         self.port_input.setRange(1, 65535)
-        try:
-            # Try to get current server port from config
-            self.port_input.setValue(config.server_config.getint('TNC', 'SERVER_PORT', fallback=8002))
-        except:
-            self.port_input.setValue(8002)
-        layout.addRow("TNC Port:", self.port_input)
+        tcp_layout.addRow("TNC Port:", self.port_input)
+        
+        self.tcp_group.setLayout(tcp_layout)
+        layout.addRow(self.tcp_group)
+        
+        # Serial Settings Group  
+        self.serial_group = QWidget()
+        serial_layout = QFormLayout()
+        
+        self.serial_port_combo = QComboBox()
+        self.serial_port_combo.setEditable(True)  # Allow custom entries
+        self.refresh_serial_ports()
+        serial_layout.addRow("Serial Port:", self.serial_port_combo)
+        
+        # Add refresh button for serial ports
+        refresh_layout = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Ports")
+        refresh_btn.clicked.connect(self.refresh_serial_ports)
+        refresh_btn.setMaximumWidth(100)
+        refresh_layout.addWidget(refresh_btn)
+        refresh_layout.addStretch()
+        serial_layout.addRow("", refresh_layout)
+        
+        self.serial_speed_combo = QComboBox()
+        serial_speeds = ["1200", "9600", "19200", "38400", "57600", "115200"]
+        self.serial_speed_combo.addItems(serial_speeds)
+        self.serial_speed_combo.setCurrentText("57600")  # Default
+        serial_layout.addRow("Serial Speed:", self.serial_speed_combo)
+        
+        self.serial_group.setLayout(serial_layout)
+        layout.addRow(self.serial_group)
         
         # NOSTR Relays
         self.relays_input = QPlainTextEdit()
         self.relays_input.setMaximumHeight(100)
-        try:
-            relays = config.server_config.get('NOSTR', 'RELAYS', fallback='wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol')
-            self.relays_input.setPlainText(relays)
-        except:
-            self.relays_input.setPlainText('wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol')
+        self.relays_input.setPlaceholderText("wss://relay.nostr.band/,wss://relay.damus.io")
         layout.addRow("NOSTR Relays:", self.relays_input)
-        
-        # Load current callsign values AFTER creating the widgets
-        self.load_callsign_values()
-        
-        # Add input validation for callsign
-        self.callsign_input.textChanged.connect(self.validate_callsign)
         
         # Buttons
         button_layout = QHBoxLayout()
-        self.save_btn = QPushButton("Save")
+        self.save_btn = QPushButton("Save Settings")
         self.cancel_btn = QPushButton("Cancel")
         
+        # Style buttons
         self.save_btn.setStyleSheet("""
             QPushButton {
-                background-color: #0ea5e9;
+                background-color: #10b981;
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #0284c7;
-            }
-            QPushButton:pressed {
-                background-color: #0369a1;
+                background-color: #059669;
             }
         """)
         
@@ -149,10 +225,9 @@ class SettingsDialog(QDialog):
                 background-color: #6b7280;
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #4b5563;
@@ -167,61 +242,143 @@ class SettingsDialog(QDialog):
         
         layout.addRow(button_layout)
         self.setLayout(layout)
+        
+        # Load current settings
+        self.load_current_settings()
 
-    def load_callsign_values(self):
-        """Load current callsign and SSID from config"""
+    def refresh_serial_ports(self):
+        """Refresh the list of available serial ports."""
+        current_text = self.serial_port_combo.currentText()
+        self.serial_port_combo.clear()
+        
+        ports = get_available_serial_ports()
+        self.serial_port_combo.addItems(ports)
+        
+        # Try to restore previous selection
+        index = self.serial_port_combo.findText(current_text)
+        if index >= 0:
+            self.serial_port_combo.setCurrentIndex(index)
+
+    def on_connection_type_changed(self):
+        """Handle TNC connection type change."""
+        connection_type = self.connection_type_combo.currentData()
+        
+        if connection_type == "tcp":
+            self.tcp_group.setVisible(True)
+            self.serial_group.setVisible(False)
+        else:  # serial
+            self.tcp_group.setVisible(False)
+            self.serial_group.setVisible(True)
+            # Auto-refresh serial ports when switching to serial
+            self.refresh_serial_ports()
+
+    def load_current_settings(self):
+        """Load current settings from config."""
         try:
-            # Get current server callsign from config
+            # Load callsign
             callsign_str = config.server_config.get('RADIO', 'SERVER_CALLSIGN', fallback='(CALLSIGN, 7)')
-            # Use your existing parse_tuple function
             callsign, ssid = config.parse_tuple(callsign_str)
-            
             self.callsign_input.setText(callsign)
             self.ssid_combo.setCurrentText(str(ssid))
+            
+            # Load connection type
+            connection_type = config.server_config.get('TNC', 'CONNECTION_TYPE', fallback='tcp').lower()
+            index = self.connection_type_combo.findData(connection_type)
+            if index >= 0:
+                self.connection_type_combo.setCurrentIndex(index)
+            
+            # Load TCP settings
+            host = config.server_config.get('TNC', 'SERVER_HOST', fallback='localhost')
+            self.host_input.setText(host)
+            
+            port = config.server_config.getint('TNC', 'SERVER_PORT', fallback=8002)
+            self.port_input.setValue(port)
+            
+            # Auto-refresh serial ports on dialog load
+            self.refresh_serial_ports()
+            
+            # Load serial settings
+            serial_port = config.server_config.get('TNC', 'SERIAL_PORT', fallback='COM3')
+            index = self.serial_port_combo.findText(serial_port)
+            if index >= 0:
+                self.serial_port_combo.setCurrentIndex(index)
+            else:
+                # Add the configured port if it's not in the list
+                self.serial_port_combo.addItem(serial_port)
+                self.serial_port_combo.setCurrentText(serial_port)
+            
+            serial_speed = config.server_config.get('TNC', 'SERIAL_SPEED', fallback='57600')
+            index = self.serial_speed_combo.findText(str(serial_speed))
+            if index >= 0:
+                self.serial_speed_combo.setCurrentIndex(index)
+            
+            # Load relays
+            try:
+                relays = config.server_config.get('NOSTR', 'RELAYS', fallback='')
+                self.relays_input.setPlainText(relays)
+            except:
+                self.relays_input.setPlainText('wss://relay.nostr.band/,wss://relay.damus.io')
+            
+            # Trigger connection type change to show/hide appropriate controls
+            self.on_connection_type_changed()
+            
         except Exception as e:
-            # Fallback values
+            print(f"Error loading settings: {e}")
+            # Set fallback values
             self.callsign_input.setText('CALLSIGN')
             self.ssid_combo.setCurrentText('7')
+            self.host_input.setText('localhost')
+            self.port_input.setValue(8002)
 
     def validate_callsign(self, text):
-        """Validate callsign input - only letters and numbers"""
-        # Convert to uppercase and filter only alphanumeric
+        """Validate callsign input - only letters and numbers."""
         cleaned = ''.join(c.upper() for c in text if c.isalnum())
         if cleaned != text.upper():
             self.callsign_input.setText(cleaned)
 
     def save_settings(self):
-        """Save settings using config.update_config"""
+        """Save settings using config.update_config."""
         try:
-            # Get callsign and SSID values
+            # Get and validate callsign
             callsign = self.callsign_input.text().strip().upper()
             ssid = int(self.ssid_combo.currentText())
             
-            # Validate callsign
             if not callsign or len(callsign) < 3:
                 QMessageBox.warning(self, "Invalid Callsign", "Callsign must be at least 3 characters.")
                 return
             
-            # Format as tuple string like your existing system expects
+            # Format callsign as tuple string
             callsign_tuple = f"({callsign}, {ssid})"
             
-            # Save each setting using your existing function
+            # Get connection type
+            connection_type = self.connection_type_combo.currentData()
+            
+            # Save settings using existing config.update_config function
             config.update_config('RADIO', 'SERVER_CALLSIGN', callsign_tuple)
-            config.update_config('TNC', 'SERVER_HOST', self.host_input.text().strip()) 
-            config.update_config('TNC', 'SERVER_PORT', str(self.port_input.value()))
+            config.update_config('TNC', 'CONNECTION_TYPE', connection_type)
+            
+            if connection_type == "tcp":
+                config.update_config('TNC', 'SERVER_HOST', self.host_input.text().strip())
+                config.update_config('TNC', 'SERVER_PORT', str(self.port_input.value()))
+            else:  # serial
+                config.update_config('TNC', 'SERIAL_PORT', self.serial_port_combo.currentText())
+                config.update_config('TNC', 'SERIAL_SPEED', self.serial_speed_combo.currentText())
+            
             config.update_config('NOSTR', 'RELAYS', self.relays_input.toPlainText().strip())
             
             # Reload config
             import importlib
             importlib.reload(config)
             
+            # Show success message but DON'T close dialog
             QMessageBox.information(self, "Success", "Settings saved successfully!")
             logging.info("Server settings updated via GUI")
-            self.accept()
+            
+            # Stay in the dialog - do NOT call self.accept()
             
         except Exception as e:
-            logging.error(f"Error saving settings: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to save: {e}")
+            print(f"Error saving settings: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to save settings: {e}")
 
 class ServerThread(QThread):
     def __init__(self, signals):
@@ -422,11 +579,9 @@ class HamstrServerGUI(QMainWindow):
             QPushButton:hover {
                 background-color: #059669;
             }
-            QPushButton:pressed {
-                background-color: #047857;
-            }
             QPushButton:disabled {
-                background-color: #9ca3af;
+                background-color: #d1d5db;
+                color: #9ca3af;
             }
         """)
         
@@ -443,21 +598,19 @@ class HamstrServerGUI(QMainWindow):
             QPushButton:hover {
                 background-color: #dc2626;
             }
-            QPushButton:pressed {
-                background-color: #b91c1c;
-            }
             QPushButton:disabled {
-                background-color: #9ca3af;
+                background-color: #d1d5db;
+                color: #9ca3af;
             }
         """)
         
-        self.stop_btn.setEnabled(False)
-        
         self.start_btn.clicked.connect(self.start_server)
         self.stop_btn.clicked.connect(self.stop_server)
+        self.stop_btn.setEnabled(False)
         
         button_layout.addWidget(self.start_btn)
         button_layout.addWidget(self.stop_btn)
+        
         control_group_layout.addLayout(button_layout)
         control_group.setLayout(control_group_layout)
         
@@ -468,20 +621,21 @@ class HamstrServerGUI(QMainWindow):
         
         self.status_label = QLabel("Server: Stopped")
         self.status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 16px;")
+        
         self.uptime_label = QLabel("Uptime: 00:00:00")
-        self.uptime_label.setStyleSheet("color: #6b7280; font-size: 14px; margin-top: 8px;")
+        self.uptime_label.setStyleSheet("color: #6b7280; font-size: 14px;")
         
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.uptime_label)
         status_layout.addStretch()
         status_group.setLayout(status_layout)
         
-        # Activity Card
+        # Activity Status Card
         activity_group = QGroupBox("⚡ Current Activity")
         activity_group.setFixedHeight(140)
         activity_layout = QVBoxLayout()
         
-        self.activity_label = QLabel("Idle")
+        self.activity_label = QLabel("Server not running")
         self.activity_label.setStyleSheet("color: #6b7280; font-size: 14px;")
         
         activity_layout.addWidget(self.activity_label)
@@ -630,7 +784,7 @@ class HamstrServerGUI(QMainWindow):
         """Setup timer for UI updates"""
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
-        self.timer.start(350)  # Update every second
+        self.timer.start(350)  # Update every 350ms
         
     def start_server(self):
         """Start the HAMSTR server"""
@@ -727,8 +881,6 @@ class HamstrServerGUI(QMainWindow):
             
     def parse_log_for_status(self, message):
         """Parse log messages to extract connection status and current activity"""
-        import re
-        
         msg_lower = message.lower()
         
         # Connection Status Parsing
@@ -799,51 +951,8 @@ class HamstrServerGUI(QMainWindow):
         elif 'processing standard note type' in msg_lower:
             self.current_activity = 'Processing STANDARD note'
         elif 'nostr note received for publishing' in msg_lower:
-            self.current_activity = 'Preparing note for publishing'
-        elif '[publish] publishing note to' in msg_lower:
-            # Extract relay count like "Publishing note to 3 relays"
-            match = re.search(r'publishing note to (\d+) relays', message, re.IGNORECASE)
-            if match:
-                self.current_activity = f'Publishing to {match.group(1)} relays'
-            else:
-                self.current_activity = 'Publishing note to relays'
-        elif '[publish] event id:' in msg_lower:
-            self.current_activity = 'Note published, got event ID'
-        elif '[publish] note sent to relays' in msg_lower:
-            self.current_activity = 'Note sent to all relays'
-        elif 'published standard note to relays: true' in msg_lower:
-            self.current_activity = 'Note published successfully'
-        elif 'standard note published successfully' in msg_lower:
-            self.current_activity = 'Publication confirmed'
-        elif 'waiting for client to initiate disconnect' in msg_lower:
-            self.current_activity = 'Waiting for client disconnect'
-                
-        # Ready signal exchange
-        elif 'sending ready message' in msg_lower:
-            self.current_activity = 'Sending ready signal'
-        elif 'sent ready, waiting for client ready' in msg_lower:
-            self.current_activity = 'Waiting for client ready'
-        elif 'received ready message' in msg_lower:
-            self.current_activity = 'Ready signals exchanged'
+            self.current_activity = 'Publishing note to NOSTR'
             
-        # Request processing stages
-        elif 'about to process request' in msg_lower:
-            self.current_activity = 'Starting request processing'
-        elif 'step 1: entering process_request' in msg_lower:
-            self.current_activity = 'Parsing request parameters'
-        elif 'step 2: command parts' in msg_lower:
-            self.current_activity = 'Analyzing command structure'
-        elif 'step 6: parsed values' in msg_lower:
-            # Extract request type from the message
-            if 'FOLLOWING' in message:
-                self.current_activity = 'Processing following feed request'
-            elif 'GLOBAL' in message:
-                self.current_activity = 'Processing global feed request'
-            elif 'SEARCH' in message:
-                self.current_activity = 'Processing search request'
-            else:
-                self.current_activity = 'Processing request'
-                
         # NOSTR operations
         elif 'getting following list for' in msg_lower:
             self.current_activity = 'Fetching following list'
@@ -892,6 +1001,26 @@ class HamstrServerGUI(QMainWindow):
         elif 'response sent successfully' in msg_lower:
             self.current_activity = 'Response sent successfully'
             
+        # Lightning/Zap operations
+        elif 'zap request received' in msg_lower:
+            self.current_activity = 'Processing Lightning zap'
+        elif 'generating lightning invoice' in msg_lower:
+            self.current_activity = 'Generating Lightning invoice'
+        elif 'sending invoice' in msg_lower:
+            self.current_activity = 'Sending Lightning invoice'
+        elif 'payment received' in msg_lower:
+            self.current_activity = 'Payment confirmed'
+        elif 'publishing zap receipt' in msg_lower:
+            self.current_activity = 'Publishing zap receipt'
+            
+        # Search operations
+        elif 'search request:' in msg_lower:
+            self.current_activity = 'Processing search request'
+        elif 'searching nostr for' in msg_lower:
+            self.current_activity = 'Searching NOSTR'
+        elif 'search completed' in msg_lower:
+            self.current_activity = 'Search completed'
+            
         # Cleanup and reset
         elif 'resetting for next connection' in msg_lower:
             self.current_activity = 'Resetting for next connection'
@@ -900,10 +1029,12 @@ class HamstrServerGUI(QMainWindow):
                 self.current_activity = 'Waiting for connections'
             
         # Error handling
-        elif 'error' in msg_lower:
+        elif 'error' in msg_lower and 'handling' not in msg_lower:
             self.current_activity = 'Error occurred'
         elif 'failed' in msg_lower:
             self.current_activity = 'Operation failed'
+        elif 'timeout' in msg_lower:
+            self.current_activity = 'Connection timeout'
             
         # Update the UI immediately
         self.update_connection_display()

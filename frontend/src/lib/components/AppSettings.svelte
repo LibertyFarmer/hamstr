@@ -13,6 +13,9 @@
   let settings = {
     TNC_CLIENT_HOST: '',
     TNC_CLIENT_PORT: '',
+    TNC_CONNECTION_TYPE: 'tcp',
+    TNC_SERIAL_PORT: 'COM3',
+    TNC_SERIAL_SPEED: '57600',
     GENERAL_ACK_TIMEOUT: '',
     GENERAL_BAUD_RATE: '',
     GENERAL_SEND_RETRIES: '',
@@ -22,7 +25,34 @@
   };
 
   let baudRateOptions = ['300', '600', '1200'];
+  let serialSpeedOptions = ['1200', '9600', '19200', '38400', '57600', '115200'];
+  let serialPortOptions = [];
   let headingElement;
+
+  // Fetch dynamic serial ports from backend
+  async function fetchSerialPorts() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/serial_ports`);
+      const data = await response.json();
+      
+      if (data.success) {
+        serialPortOptions = data.ports;
+        console.log(`Loaded ${data.ports.length} serial ports for ${data.platform}:`, data.ports);
+      } else {
+        console.error('Failed to fetch serial ports:', data.error);
+        // Fallback to basic ports
+        serialPortOptions = ['COM3', '/dev/ttyUSB0', '/dev/cu.usbserial'];
+      }
+    } catch (error) {
+      console.error('Error fetching serial ports:', error);
+      // Fallback to basic ports
+      serialPortOptions = ['COM3', '/dev/ttyUSB0', '/dev/cu.usbserial'];
+    }
+  }
+
+  // Reactive statement to handle TNC type changes
+  $: showTcpSettings = settings.TNC_CONNECTION_TYPE === 'tcp';
+  $: showSerialSettings = settings.TNC_CONNECTION_TYPE === 'serial';
 
   async function fetchSettings() {
     try {
@@ -30,6 +60,7 @@
       const data = await response.json();
       
       console.log('Received settings data:', data);
+      console.log('TNC-related keys in response:', Object.keys(data).filter(key => key.includes('TNC')));
 
       const parseCallsign = (callsignData) => {
         if (typeof callsignData === 'string') {
@@ -47,10 +78,17 @@
         ...data,
         RADIO_CLIENT_CALLSIGN: parseCallsign(data.RADIO_CLIENT_CALLSIGN),
         RADIO_HAMSTR_SERVER: parseCallsign(data.RADIO_HAMSTR_SERVER),
-        GENERAL_BAUD_RATE: data.GENERAL_BAUD_RATE.toString()
+        GENERAL_BAUD_RATE: data.GENERAL_BAUD_RATE?.toString() || '1200',
+        // Handle TNC settings with proper defaults and ensure they load correctly
+        TNC_CONNECTION_TYPE: data.TNC_CONNECTION_TYPE || 'tcp',
+        TNC_CLIENT_HOST: data.TNC_CLIENT_HOST || 'localhost',
+        TNC_CLIENT_PORT: data.TNC_CLIENT_PORT || '8001',
+        TNC_SERIAL_PORT: data.TNC_SERIAL_PORT || 'COM3',
+        TNC_SERIAL_SPEED: data.TNC_SERIAL_SPEED?.toString() || '57600'
       };
 
-      console.log('Parsed settings:', settings);
+      console.log('Final parsed settings:', settings);
+      console.log('TNC_CONNECTION_TYPE set to:', settings.TNC_CONNECTION_TYPE);
     } catch (error) {
       console.error('Error fetching settings:', error);
       dispatch('settingsSaved', { 
@@ -88,7 +126,7 @@
             console.log('Settings saved successfully:', result);
             dispatch('settingsSaved', { 
                 success: true, 
-                message: 'Settings saved successfully!' 
+                message: 'Settings saved successfully!'
             });
             // Add the settingsUpdated event dispatch
             window.dispatchEvent(new CustomEvent('settingsUpdated'));
@@ -113,8 +151,9 @@
     }
   }
 
-  onMount(() => {
-    fetchSettings();
+  onMount(async () => {
+    await fetchSerialPorts(); // Fetch dynamic serial ports first
+    await fetchSettings();    // Then load settings
   });
 
   function focusHeading() {
@@ -127,6 +166,9 @@
     settings = {
       TNC_CLIENT_HOST: 'localhost',
       TNC_CLIENT_PORT: '8001',
+      TNC_CONNECTION_TYPE: 'tcp',
+      TNC_SERIAL_PORT: 'COM3',
+      TNC_SERIAL_SPEED: '57600',
       GENERAL_ACK_TIMEOUT: '30',
       GENERAL_BAUD_RATE: '1200',
       GENERAL_SEND_RETRIES: '3',
@@ -151,15 +193,56 @@
     <!-- TNC Settings -->
     <Card>
       <h3 class="text-xl font-bold mb-4">TNC Settings</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      
+      <!-- TNC Connection Type Selector -->
+      <div class="mb-6">
         <Label class="space-y-2">
-          <span>TNC Host</span>
-          <Input type="text" bind:value={settings.TNC_CLIENT_HOST} placeholder="localhost" />
+          <span>TNC Connection Type</span>
+          <Select bind:value={settings.TNC_CONNECTION_TYPE}>
+            <option value="tcp">TCP</option>
+            <option value="serial">Serial</option>
+          </Select>
         </Label>
-        <Label class="space-y-2">
-          <span>TNC Port</span>
-          <Input type="number" bind:value={settings.TNC_CLIENT_PORT} placeholder="8001" />
-        </Label>
+      </div>
+
+      <!-- TCP Settings (conditional) -->
+      {#if showTcpSettings}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <Label class="space-y-2">
+            <span>TNC Host</span>
+            <Input type="text" bind:value={settings.TNC_CLIENT_HOST} placeholder="localhost" />
+          </Label>
+          <Label class="space-y-2">
+            <span>TNC Port</span>
+            <Input type="number" bind:value={settings.TNC_CLIENT_PORT} placeholder="8001" />
+          </Label>
+        </div>
+      {/if}
+
+      <!-- Serial Settings (conditional) -->
+      {#if showSerialSettings}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <Label class="space-y-2">
+            <span>Serial Port</span>
+            <Select bind:value={settings.TNC_SERIAL_PORT}>
+              {#each serialPortOptions as port}
+                <option value={port}>{port}</option>
+              {/each}
+            </Select>
+          </Label>
+          <Label class="space-y-2">
+            <span>Serial Speed</span>
+            <Select bind:value={settings.TNC_SERIAL_SPEED}>
+              {#each serialSpeedOptions as speed}
+                <option value={speed}>{speed}</option>
+              {/each}
+            </Select>
+          </Label>
+        </div>
+      {/if}
+
+      <!-- Common TNC Settings -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Label class="space-y-2">
           <span>ACK Timeout (seconds)</span>
           <Input type="number" bind:value={settings.GENERAL_ACK_TIMEOUT} />
@@ -228,9 +311,6 @@
               {/each}
             </Select>
           </div>
-          <p class="text-sm text-gray-500 dark:text-gray-400">
-            The callsign of the HAMSTR server you want to connect to
-          </p>
         </div>
       </div>
     </Card>
@@ -240,33 +320,24 @@
       <h3 class="text-xl font-bold mb-4">NOSTR Settings</h3>
       <div class="space-y-4">
         <Label class="space-y-2">
-          <span>Default Note Request Count (10 max)</span>
-          <Input 
-            type="number" 
-            bind:value={settings.NOSTR_DEFAULT_NOTE_REQUEST_COUNT}
-            min="1"
-            max="10"
-            placeholder="Number of notes to request"
-          />
+          <span>Default Note Request Count</span>
+          <Input type="number" bind:value={settings.NOSTR_DEFAULT_NOTE_REQUEST_COUNT} placeholder="2" />
         </Label>
       </div>
     </Card>
 
-    <!-- Storage Management -->
+    <!-- Database Settings -->
     <Card>
-      <h3 class="text-xl font-bold mb-4">Storage Management</h3>
+      <h3 class="text-xl font-bold mb-4">Database</h3>
       <div class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <span class="text-lg font-medium">Clear Local Notes</span>
-            <p class="text-sm text-gray-500 dark:text-gray-400">
-              Delete all stored notes from local database
-            </p>
-          </div>
+        <p class="text-gray-600 dark:text-gray-400">
+          Clear all locally stored notes from the database. This cannot be undone.
+        </p>
+        <div>
           <Button 
             color="red" 
             on:click={async () => {
-              if (confirm('Are you sure you want to clear all stored notes? This cannot be undone.')) {
+              if (confirm('Are you sure you want to clear all notes? This cannot be undone.')) {
                 try {
                   const response = await fetch(`${apiBaseUrl}/api/clear_notes`, {
                     method: 'POST'
