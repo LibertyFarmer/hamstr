@@ -764,10 +764,43 @@ def get_available_serial_ports():
     
     return ports
 
+# DEBUG BACKEND ROUTE
+
+@app.route('/api/backend_status', methods=['GET'])
+def backend_status():
+    """Get current backend system status for debugging."""
+    try:
+        # Import here to avoid circular imports
+        import config as config_module
+        
+        status = {
+            "backend_type": getattr(config_module, 'BACKEND_TYPE', 'unknown'),
+            "backend_system_available": False,
+            "legacy_mode": True
+        }
+        
+        # Try to get backend manager status if available
+        try:
+            from network_backends import get_backend_info
+            backend_info = get_backend_info()
+            status["backend_system_available"] = True
+            status["available_backends"] = backend_info
+            
+            # Check if we're actually using backend system
+            if hasattr(client, 'core') and hasattr(client.core, 'use_backend_system'):
+                status["legacy_mode"] = not client.core.use_backend_system
+                if hasattr(client.core, 'backend_manager'):
+                    status["manager_status"] = client.core.backend_manager.get_status()
+        except:
+            pass
+            
+        return jsonify(status)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 #Settings Route(s)
-# Replace the existing @app.route('/api/settings', methods=['GET', 'POST']) function in web_app.py
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def settings():
@@ -801,6 +834,7 @@ def settings():
         settings_dict = {}
         
         # Read from MAIN settings.ini (shared settings)
+        # Now includes GENERAL, NOSTR, PTT, NETWORK, VARA, RETICULUM, FLDIGI sections
         for section in config.config.sections():
             for option in config.config.options(section):
                 key = f"{section.upper()}_{option.upper()}"
@@ -815,12 +849,16 @@ def settings():
                     value = float(value)
                 elif value.isdigit():
                     value = int(value)
+                # Handle boolean values for new backend settings
+                elif value.lower() in ['true', 'false']:
+                    value = value.lower() == 'true'
 
                 settings_dict[key] = value
                 setting_sections[key] = (section, option)
 
         # OVERRIDE with CLIENT-SPECIFIC settings from client_config
-        client_sections = ['RADIO', 'TNC', 'NOSTR']
+        # Include new NETWORK section for client-specific backend config
+        client_sections = ['RADIO', 'TNC', 'NOSTR', 'NETWORK', 'VARA', 'RETICULUM', 'FLDIGI']
         for section_name in client_sections:
             if config.client_config.has_section(section_name):
                 for option in config.client_config.options(section_name):
@@ -836,6 +874,9 @@ def settings():
                         value = float(value)
                     elif value.isdigit():
                         value = int(value)
+                    # Handle boolean values for backend settings
+                    elif value.lower() in ['true', 'false']:
+                        value = value.lower() == 'true'
 
                     settings_dict[key] = value
                     setting_sections[key] = (section_name, option)
@@ -847,6 +888,7 @@ def settings():
         import traceback
         traceback.print_exc()  # Print full traceback
         return jsonify({"error": str(e)}), 500
+    
     
 #Secure NSEC Handling API
 

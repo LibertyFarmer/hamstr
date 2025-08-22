@@ -13,14 +13,6 @@ import utils
 from socketio_logger import get_socketio_logger
 from nsec_storage import NSECStorage
 
-try:
-    from network_backends.backend_manager import NetworkBackendManager
-    from network_backends.base_backend import BackendType
-    BACKENDS_AVAILABLE = True
-except ImportError:
-    BACKENDS_AVAILABLE = False
-    logging.warning("[CORE] Backend system not available - using legacy mode")
-
 # Regular logger
 logger = logging.getLogger(__name__)
 
@@ -36,12 +28,6 @@ class Core:
         self.tnc_host = config.SERVER_HOST if is_server else config.CLIENT_HOST
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
-        # NEW: Backend system detection (but stay in legacy mode for now)
-        self.use_backend_system = False  # Always use legacy for Phase 3A testing
-        if BACKENDS_AVAILABLE and hasattr(config, 'BACKEND_TYPE'):
-            backend_type = getattr(config, 'BACKEND_TYPE', 'legacy')
-            if backend_type.lower() != 'legacy':
-                logging.info(f"[CORE] Backend system available: {backend_type} (using legacy for now)")
         self.connection_manager = ConnectionManager(is_server, self)
         self.packet_handler = PacketHandler(self)
         self.message_processor = MessageProcessor(self)
@@ -734,11 +720,3 @@ class Core:
     
     def check_missing_packets(self, session):
         return self.packet_handler.check_missing_packets(session)
-    
-    def get_system_status(self):
-        return {
-            "core_system": "legacy",
-            "backend_system_available": BACKENDS_AVAILABLE,
-            "backend_type": getattr(config, 'BACKEND_TYPE', 'legacy'),
-            "use_backend_system": False
-        }

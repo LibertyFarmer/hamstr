@@ -28,30 +28,3 @@ rx_delay = 0.25
 ptt_tail = 0.1
 ack_spacing = 0.5
 
-[NETWORK]
-backend_type = packet
-
-[VARA]
-bandwidth = 2300
-arq_timeout = 60
-chat_mode = ON
-connection_timeout = 30
-command_port = 8300
-data_port = 8301
-
-[RETICULUM]
-interface_type = kiss
-kiss_port = 7300
-kiss_host = localhost
-reticulum_config_path = ~/.reticulum
-announce_interval = 300
-hop_count = 4
-identity_file = reticulum_identity
-
-[FLDIGI]
-kiss_port = 7342
-mode = psk31
-arq_enabled = False
-timing_multiplier = 2
-connection_timeout = 45
-
