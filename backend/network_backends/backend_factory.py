@@ -139,19 +139,26 @@ def create_backend_from_config(config_module, is_server: bool = False) -> Networ
         if is_server:
             # Server reads from server_config first, then main config
             if hasattr(config_module, 'server_config') and config_module.server_config.has_section('NETWORK'):
-                backend_type_str = config_module.server_config.get('NETWORK', 'backend_type', 'legacy')
+                backend_type_str = config_module.server_config.get('NETWORK', 'backend_type', fallback='legacy')
+                logging.info(f"[FACTORY] Server using server_config: {backend_type_str}")
             else:
-                backend_type_str = config_module.config.get('NETWORK', 'backend_type', 'legacy')
+                backend_type_str = config_module.config.get('NETWORK', 'backend_type', fallback='legacy')
+                logging.info(f"[FACTORY] Server using main config: {backend_type_str}")
         else:
             # Client reads from client_config first, then main config  
             if hasattr(config_module, 'client_config') and config_module.client_config.has_section('NETWORK'):
-                backend_type_str = config_module.client_config.get('NETWORK', 'backend_type', 'legacy')
+                backend_type_str = config_module.client_config.get('NETWORK', 'backend_type', fallback='legacy')
+                logging.info(f"[FACTORY] Client using client_config: {backend_type_str}")
             else:
-                backend_type_str = config_module.config.get('NETWORK', 'backend_type', 'legacy')
-    except:
-        # If no NETWORK section exists anywhere, default to legacy
+                backend_type_str = config_module.config.get('NETWORK', 'backend_type', fallback='legacy')
+                logging.info(f"[FACTORY] Client using main config: {backend_type_str}")
+    except Exception as e:
+        # Show the actual error instead of hiding it
+        logging.error(f"[FACTORY] Config reading error: {e}")
+        import traceback
+        logging.error(f"[FACTORY] Traceback: {traceback.format_exc()}")
         backend_type_str = 'legacy'
-        logging.info("[FACTORY] No NETWORK section found, defaulting to legacy mode")
+        logging.info("[FACTORY] Defaulting to legacy mode due to config error")
     
     backend_type = BackendFactory.parse_backend_type(backend_type_str)
     return BackendFactory.create_backend(backend_type, config_module, is_server)

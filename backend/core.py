@@ -36,15 +36,38 @@ class Core:
         self.tnc_host = config.SERVER_HOST if is_server else config.CLIENT_HOST
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
-        # NEW: Backend system detection (but stay in legacy mode for now)
-        self.use_backend_system = False  # Always use legacy for Phase 3A testing
+         # NEW: Backend system detection and activation
+        self.use_backend_system = False
+        self.backend_manager = None
+
         if BACKENDS_AVAILABLE and hasattr(config, 'BACKEND_TYPE'):
             backend_type = getattr(config, 'BACKEND_TYPE', 'legacy')
+            
+            # Enable backend system for non-legacy modes
             if backend_type.lower() != 'legacy':
-                logging.info(f"[CORE] Backend system available: {backend_type} (using legacy for now)")
+                try:
+                    self.backend_manager = NetworkBackendManager(config, is_server)
+                    
+                    if not self.backend_manager.is_legacy_mode():
+                        self.use_backend_system = True
+                        logging.info(f"[CORE] Using {backend_type} backend system")
+                    else:
+                        logging.info(f"[CORE] Backend type '{backend_type}' fell back to legacy")
+                        
+                except Exception as e:
+                    logging.error(f"[CORE] Backend system initialization failed: {e}")
+                    logging.info("[CORE] Falling back to legacy mode")
+                    self.backend_manager = None
+
+        # Always initialize legacy components for compatibility
         self.connection_manager = ConnectionManager(is_server, self)
         self.packet_handler = PacketHandler(self)
         self.message_processor = MessageProcessor(self)
+
+        if self.use_backend_system:
+            logging.info(f"[CORE] Backend system active - legacy components in standby mode")
+        else:
+            logging.info("[CORE] Using legacy packet system")
         self.sessions = {}
         self.tnc_connection = None
         self.running = True
@@ -53,7 +76,13 @@ class Core:
             self.nsec_storage = NSECStorage(base_dir)
 
     def start(self):
-        return self.connection_manager.start()
+        if self.use_backend_system:
+            # Backend system - no TNC startup needed
+            logging.info("[CORE] Backend system ready - VARA will connect on-demand")
+            return True
+        else:
+            # Legacy system - start TNC connection
+            return self.connection_manager.start()
 
     def stop(self):
         if not hasattr(self, '_stopped'):
@@ -66,7 +95,12 @@ class Core:
             logging.debug("Core stop called again, but already stopped [CORE_STOP_AGAIN]")
 
     def connect(self, remote_callsign):
-        return self.connection_manager.connect(remote_callsign)
+        if self.use_backend_system:
+            # Route through backend system
+            return self.backend_manager.connect(remote_callsign)
+        else:
+            # Legacy system
+            return self.connection_manager.connect(remote_callsign)
 
     def create_session(self, remote_callsign):
         return self.connection_manager.create_session(remote_callsign)
@@ -725,12 +759,20 @@ class Core:
         socketio_logger.info("[SYSTEM] Resetting for next connection")
         logging.info("Resetting for next connection")
         self.sessions.clear()
-        if self.is_server:
-            self.connection_manager.reset_for_next_connection()
+        
+        if self.use_backend_system:
+            # Backend system - just clear sessions, no TNC reset needed
+            if hasattr(self, 'backend_manager') and self.backend_manager:
+                # Backend manager will handle cleanup automatically
+                logging.info("[CORE] Backend system reset - ready for next connection")
         else:
-            self.connection_manager.stop()
-            self.connection_manager = ConnectionManager(self.is_server, self)
-            self.connection_manager.start()
+            # Legacy system
+            if self.is_server:
+                self.connection_manager.reset_for_next_connection()
+            else:
+                self.connection_manager.stop()
+                self.connection_manager = ConnectionManager(self.is_server, self)
+                self.connection_manager.start()
     
     def check_missing_packets(self, session):
         return self.packet_handler.check_missing_packets(session)
