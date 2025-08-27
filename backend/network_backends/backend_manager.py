@@ -248,3 +248,15 @@ class NetworkBackendManager:
                 self.disconnect(session)
             
             logging.info("[BACKEND_MGR] Cleanup completed")
+
+    def get_backend_type(self) -> BackendType:
+        """
+        Get the type of the current backend.
+        
+        Returns:
+            BackendType enum of current backend
+        """
+        if self.is_legacy_mode():
+            return BackendType.PACKET  # Default for legacy mode
+        
+        return self.current_backend.get_backend_type()

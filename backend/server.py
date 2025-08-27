@@ -496,6 +496,50 @@ class Server:
 
     def handle_connected_session(self, session):
         logging.info(f"Handling session for {session.remote_callsign}")
+        
+        # NEW: DirectProtocol detection and handling
+        if (hasattr(self.core, 'protocol_manager') and 
+            self.core.protocol_manager and 
+            self.core.protocol_manager.get_protocol_type() == 'DirectProtocol'):
+            
+            logging.info("[SERVER] Using DirectProtocol - waiting for JSON request")
+            
+            try:
+                # Wait for direct JSON request (no packet protocol)
+                request_data = self.core.protocol_manager.receive_nostr_response(session, timeout=30)
+                
+                if request_data:
+                    logging.info(f"[SERVER] Received DirectProtocol request: {request_data.get('type')}")
+                    
+                    # Convert to format your existing process_request expects
+                    request_type = request_data.get('type', 'GET_NOTES')
+                    count = request_data.get('count', 2)
+                    params = request_data.get('params', '')
+                    
+                    if params:
+                        request_string = f"{request_type} {count} {params}"
+                    else:
+                        request_string = f"{request_type} {count}"
+                    
+                    # Use your existing process_request method
+                    response = self.process_request(request_string)
+                    
+                    # Send response back via DirectProtocol
+                    response_data = {'data': response}
+                    success = self.core.protocol_manager.send_nostr_request(session, response_data)
+                    
+                    if success:
+                        logging.info("[SERVER] DirectProtocol response sent")
+                        return  # Done - exit the method
+                    else:
+                        logging.error("[SERVER] Failed to send DirectProtocol response")
+                
+            except Exception as e:
+                logging.error(f"[SERVER] DirectProtocol error: {e}")
+        
+        # OLD CODE INSERTION POINT: Insert your original code starting here
+        logging.info("[SERVER] Using packet protocol")
+        
         received_packets = {}
         total_packets = None
         is_note = False

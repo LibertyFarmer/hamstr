@@ -15,7 +15,6 @@ from protocol_utils import compress_nostr_data, decompress_nostr_data
 socketio_logger = get_socketio_logger()
 
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Client:
@@ -62,53 +61,113 @@ class Client:
                     }
                 additional_params = npub
 
-                # Format request with space and pipe separation
-            request = f"GET_NOTES {request_type.value}|{count}"
-            if additional_params:
-                request = f"{request}|{additional_params}"
+            # NEW: Route through protocol layer if available
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                socketio_logger.info("[CLIENT] Using protocol layer for request")
+                logging.info(f"Using protocol layer: {self.core.protocol_manager.get_protocol_type()}")
                 
-            logging.info(f"Sending request: {request}")
-            
-            # Add significant delay before sending DATA_REQUEST
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
-            
-            for attempt in range(config.RETRY_COUNT):
-                if self.core.send_data_request(self.session, request):
-                    socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
-                    logging.info("DATA_REQUEST sent and READY state achieved")
-                    
-                    # Use the core receive_response method without passing a timeout
-                    # The method will use the global CONNECTION_TIMEOUT from config
-                    response = self.core.receive_response(self.session)
+                # Prepare request data for protocol layer
+                request_data = {
+                    'type': request_type.value,
+                    'count': count
+                }
+                if additional_params:
+                    request_data['params'] = additional_params
+                
+                # Send via protocol layer
+                success = self.core.protocol_manager.send_nostr_request(self.session, request_data)
+                
+                if success:
+                    # Receive response via protocol layer
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
                     
                     if response:
-                        try:
-                            response_data = json.loads(response)
-                            if not response_data.get('success', True):
-                                error_type = response_data.get('error_type')
-                                error_message = response_data.get('message')
-                                socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
-                                # Return the error response for frontend handling
-                                return True, response
-                        except json.JSONDecodeError:
-                            pass  # Not an error response, continue normal processing
+                        # Handle response based on protocol type
+                        if self.core.protocol_manager.get_protocol_type() == 'DirectProtocol':
+                            # Direct response from VARA/reliable transport
+                            response_data = response.get('data', '')
+                        else:
+                            # Packet protocol response
+                            response_data = response.get('data', '')
                         
-                        decompressed_response = decompress_nostr_data(response)
-                        socketio_logger.info(f"[CLIENT] JSON NOTE: {decompressed_response}")
-                        logging.info(f"Server response: {decompressed_response}")
-                        return True, response
+                        if response_data:
+                            try:
+                                # Check if it's an error response
+                                parsed_response = json.loads(response_data)
+                                if not parsed_response.get('success', True):
+                                    error_type = parsed_response.get('error_type')
+                                    error_message = parsed_response.get('message')
+                                    socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
+                                    return True, response_data
+                            except json.JSONDecodeError:
+                                pass  # Not an error response, continue normal processing
+                            
+                            # Decompress and return response
+                            decompressed_response = decompress_nostr_data(response_data)
+                            socketio_logger.info(f"[CLIENT] Received response via protocol layer")
+                            logging.info(f"Protocol response received: {len(decompressed_response)} chars")
+                            return True, response_data
+                        else:
+                            socketio_logger.error("[CLIENT] Empty response from protocol layer")
+                            return False, None
                     else:
-                        socketio_logger.error("[CLIENT] No response received from server")
-                        logging.error("No response received from server")
-                        break
+                        socketio_logger.error("[CLIENT] No response from protocol layer")
+                        return False, None
                 else:
-                    socketio_logger.warning(f"[SESSION] Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
-                    logging.warning(f"Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
-                    if attempt < config.RETRY_COUNT - 1:
-                        time.sleep(config.ACK_TIMEOUT)
+                    socketio_logger.error("[CLIENT] Protocol layer request failed")
+                    return False, None
+            
             else:
-                socketio_logger.error("[CLIENT] Failed to send request after all retry attempts")
-                logging.error("Failed to send request after all retry attempts")
+                # FALLBACK: Use existing legacy packet protocol
+                socketio_logger.info("[CLIENT] Using legacy packet protocol")
+                logging.info("No protocol manager - using legacy packet system")
+                
+                # Format request with space and pipe separation
+                request = f"GET_NOTES {request_type.value}|{count}"
+                if additional_params:
+                    request = f"{request}|{additional_params}"
+                    
+                logging.info(f"Sending request: {request}")
+                
+                # Add significant delay before sending DATA_REQUEST
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
+                
+                for attempt in range(config.RETRY_COUNT):
+                    if self.core.send_data_request(self.session, request):
+                        socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
+                        logging.info("DATA_REQUEST sent and READY state achieved")
+                        
+                        # Use the core receive_response method
+                        response = self.core.receive_response(self.session)
+                        
+                        if response:
+                            try:
+                                response_data = json.loads(response)
+                                if not response_data.get('success', True):
+                                    error_type = response_data.get('error_type')
+                                    error_message = response_data.get('message')
+                                    socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
+                                    return True, response
+                            except json.JSONDecodeError:
+                                pass  # Not an error response, continue normal processing
+                            
+                            decompressed_response = decompress_nostr_data(response)
+                            socketio_logger.info(f"[CLIENT] JSON NOTE: {decompressed_response}")
+                            logging.info(f"Server response: {decompressed_response}")
+                            return True, response
+                        else:
+                            socketio_logger.error("[CLIENT] No response received from server")
+                            logging.error("No response received from server")
+                            break
+                    else:
+                        socketio_logger.warning(f"[SESSION] Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
+                        logging.warning(f"Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
+                        if attempt < config.RETRY_COUNT - 1:
+                            time.sleep(config.ACK_TIMEOUT)
+                else:
+                    socketio_logger.error("[CLIENT] Failed to send request after all retry attempts")
+                    logging.error("Failed to send request after all retry attempts")
+
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] An error occurred during request: {e}")
             logging.error(f"An error occurred during request: {e}")

@@ -13,6 +13,8 @@ import utils
 from socketio_logger import get_socketio_logger
 from nsec_storage import NSECStorage
 
+# New modular network handler imports
+
 try:
     from network_backends.backend_manager import NetworkBackendManager
     from network_backends.base_backend import BackendType
@@ -20,6 +22,15 @@ try:
 except ImportError:
     BACKENDS_AVAILABLE = False
     logging.warning("[CORE] Backend system not available - using legacy mode")
+
+# New modular protocol handler import
+
+try:
+    from protocol_handlers import ProtocolManager
+    PROTOCOL_HANDLERS_AVAILABLE = True
+except ImportError:
+    PROTOCOL_HANDLERS_AVAILABLE = False
+    logging.warning("[CORE] Protocol handlers not available")
 
 # Regular logger
 logger = logging.getLogger(__name__)
@@ -68,6 +79,33 @@ class Core:
             logging.info(f"[CORE] Backend system active - legacy components in standby mode")
         else:
             logging.info("[CORE] Using legacy packet system")
+
+        self.protocol_manager = None
+        if self.use_backend_system and PROTOCOL_HANDLERS_AVAILABLE:
+            try:
+                self.protocol_manager = ProtocolManager(
+                    self.backend_manager, 
+                    config, 
+                    core_instance=self
+                )
+                logging.info(f"[CORE] Protocol manager: {self.protocol_manager.get_protocol_type()}")
+            except Exception as e:
+                logging.error(f"[CORE] Protocol manager init failed: {e}")
+                self.protocol_manager = None
+
+        # Initialize protocol manager if using backend system
+        self.protocol_manager = None
+        if self.use_backend_system and PROTOCOL_HANDLERS_AVAILABLE:
+            try:
+                self.protocol_manager = ProtocolManager(
+                    self.backend_manager, 
+                    config, 
+                    core_instance=self
+                )
+                logging.info(f"[CORE] Protocol manager: {self.protocol_manager.get_protocol_type()}")
+            except Exception as e:
+                logging.error(f"[CORE] Protocol manager init failed: {e}")
+                self.protocol_manager = None
         self.sessions = {}
         self.tnc_connection = None
         self.running = True
@@ -784,3 +822,37 @@ class Core:
             "backend_type": getattr(config, 'BACKEND_TYPE', 'legacy'),
             "use_backend_system": False
         }
+    
+    def send_request_via_protocol(self, session, request_type, count=2, additional_params=None):
+        """
+        Send NOSTR request via protocol layer.
+        Routes to DirectProtocol (VARA) or PacketProtocol (packet radio).
+        """
+        if not self.protocol_manager:
+            logging.warning("[CORE] No protocol manager - falling back to legacy")
+            # TODO: Call your existing request method here
+            return False, None
+        
+        try:
+            # Prepare request data
+            request_data = {
+                'type': str(request_type),
+                'count': count
+            }
+            
+            if additional_params:
+                request_data['params'] = additional_params
+            
+            # Send via protocol layer
+            success = self.protocol_manager.send_nostr_request(session, request_data)
+            
+            if success:
+                # Receive response via protocol layer
+                response = self.protocol_manager.receive_nostr_response(session, timeout=60)
+                return success, response
+            else:
+                return False, None
+                
+        except Exception as e:
+            logging.error(f"[CORE] Protocol request failed: {e}")
+            return False, None
