@@ -57,7 +57,7 @@ class Core:
             # Enable backend system for non-legacy modes
             if backend_type.lower() != 'legacy':
                 try:
-                    self.backend_manager = NetworkBackendManager(config, is_server)
+                    self.backend_manager = NetworkBackendManager(config, is_server, core_instance=self)
                     
                     if not self.backend_manager.is_legacy_mode():
                         self.use_backend_system = True
