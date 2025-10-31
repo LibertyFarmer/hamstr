@@ -31,6 +31,7 @@ class NetworkBackendManager:
         self.is_server = is_server
         self.core_instance = core_instance  # <-- NEW LINE
         self.current_backend = None
+        self.active_sessions = {}
        
         
         # Initialize the backend based on configuration
