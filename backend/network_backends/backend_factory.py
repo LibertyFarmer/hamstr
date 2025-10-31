@@ -29,7 +29,7 @@ class BackendFactory:
     }
     
     @staticmethod
-    def create_backend(backend_type: BackendType, config, is_server: bool = False) -> NetworkBackend:
+    def create_backend(backend_type: BackendType, config, is_server: bool = False, core_instance=None) -> NetworkBackend:
         """
         Create and return the appropriate backend instance.
         
@@ -37,6 +37,7 @@ class BackendFactory:
             backend_type: Type of backend to create
             config: Configuration object
             is_server: Whether this is a server instance
+            core_instance: Reference to Core instance (required for packet backend)
             
         Returns:
             Initialized backend instance
@@ -63,8 +64,12 @@ class BackendFactory:
         backend_class = BackendFactory._backend_registry[backend_type]
         
         try:
-            # Create and initialize the backend
-            backend_instance = backend_class(config, is_server)
+            # Create backend - pass core_instance for packet backend
+            if backend_type == BackendType.PACKET:
+                backend_instance = backend_class(config, is_server, core_instance)
+            else:
+                backend_instance = backend_class(config, is_server)
+            
             logging.info(f"[FACTORY] Created {backend_type.value} backend "
                         f"for {'server' if is_server else 'client'}")
             return backend_instance
@@ -123,13 +128,14 @@ class BackendFactory:
             )
 
 # Helper function for easy backend creation from config
-def create_backend_from_config(config_module, is_server: bool = False) -> NetworkBackend:
+def create_backend_from_config(config_module, is_server: bool = False, core_instance=None) -> NetworkBackend:
     """
     Convenience function to create backend directly from HAMSTR config system.
     
     Args:
         config_module: HAMSTR config module (imports config.py)
         is_server: Whether this is a server instance
+        core_instance: Reference to Core instance (required for packet backend)
         
     Returns:
         Initialized backend instance or None for legacy mode
@@ -161,4 +167,4 @@ def create_backend_from_config(config_module, is_server: bool = False) -> Networ
         logging.info("[FACTORY] Defaulting to legacy mode due to config error")
     
     backend_type = BackendFactory.parse_backend_type(backend_type_str)
-    return BackendFactory.create_backend(backend_type, config_module, is_server)
+    return BackendFactory.create_backend(backend_type, config_module, is_server, core_instance)

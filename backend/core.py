@@ -47,10 +47,16 @@ class Core:
         self.tnc_host = config.SERVER_HOST if is_server else config.CLIENT_HOST
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
-         # NEW: Backend system detection and activation
+        
+        # Always initialize legacy components FIRST (backend_manager needs these!)
+        self.connection_manager = ConnectionManager(is_server, self)
+        self.packet_handler = PacketHandler(self)
+        self.message_processor = MessageProcessor(self)
+        
+        # NEW: Backend system detection and activation (AFTER legacy components exist)
         self.use_backend_system = False
         self.backend_manager = None
-
+        
         if BACKENDS_AVAILABLE and hasattr(config, 'BACKEND_TYPE'):
             backend_type = getattr(config, 'BACKEND_TYPE', 'legacy')
             
@@ -69,30 +75,12 @@ class Core:
                     logging.error(f"[CORE] Backend system initialization failed: {e}")
                     logging.info("[CORE] Falling back to legacy mode")
                     self.backend_manager = None
-
-        # Always initialize legacy components for compatibility
-        self.connection_manager = ConnectionManager(is_server, self)
-        self.packet_handler = PacketHandler(self)
-        self.message_processor = MessageProcessor(self)
-
+        
         if self.use_backend_system:
             logging.info(f"[CORE] Backend system active - legacy components in standby mode")
         else:
             logging.info("[CORE] Using legacy packet system")
-
-        self.protocol_manager = None
-        if self.use_backend_system and PROTOCOL_HANDLERS_AVAILABLE:
-            try:
-                self.protocol_manager = ProtocolManager(
-                    self.backend_manager, 
-                    config, 
-                    core_instance=self
-                )
-                logging.info(f"[CORE] Protocol manager: {self.protocol_manager.get_protocol_type()}")
-            except Exception as e:
-                logging.error(f"[CORE] Protocol manager init failed: {e}")
-                self.protocol_manager = None
-
+        
         # Initialize protocol manager if using backend system
         self.protocol_manager = None
         if self.use_backend_system and PROTOCOL_HANDLERS_AVAILABLE:
@@ -106,6 +94,7 @@ class Core:
             except Exception as e:
                 logging.error(f"[CORE] Protocol manager init failed: {e}")
                 self.protocol_manager = None
+        
         self.sessions = {}
         self.tnc_connection = None
         self.running = True

@@ -28,35 +28,36 @@ class PacketBackend(NetworkBackend):
     modular backend interface.
     """
     
-    def __init__(self, config, is_server: bool):
+    def __init__(self, config, is_server: bool, core_instance=None):
         """
         Initialize packet backend using existing HAMSTR components.
         
         Args:
             config: Configuration object
             is_server: True if server instance
+            core_instance: Reference to Core instance (REQUIRED for packet backend)
         """
         super().__init__(config, is_server)
         
-        # Import here to avoid circular dependencies
-        from connection_manager import ConnectionManager
-        from packet_handler import PacketHandler
-        from message_processor import MessageProcessor
+        if core_instance is None:
+            raise ValueError("PacketBackend requires core_instance - cannot be None")
         
-        # Create instances of existing components
-        # We pass None for core since we're wrapping the functionality
-        self.connection_manager = ConnectionManager(is_server, None)
-        self.packet_handler = PacketHandler(None)
-        self.message_processor = MessageProcessor(None)
-        
-        # Store references for the components that need each other
-        self.connection_manager.packet_handler = self.packet_handler
-        self.connection_manager.message_processor = self.message_processor
-        self.packet_handler.connection_manager = self.connection_manager
-        self.message_processor.connection_manager = self.connection_manager
+        # Use Core's existing components instead of creating new ones
+        self.core = core_instance
+        self.connection_manager = core_instance.connection_manager
+        self.packet_handler = core_instance.packet_handler
+        self.message_processor = core_instance.message_processor
         
         logging.info(f"[PACKET_BACKEND] Initialized packet backend for {'server' if is_server else 'client'}")
+        logging.info(f"[PACKET_BACKEND] Using Core's existing packet system components")
         self._update_status(BackendStatus.DISCONNECTED)
+        
+        # For servers, start TNC connection immediately
+        if is_server:
+            if not self.connection_manager.start():
+                logging.error("[PACKET_BACKEND] Failed to start TNC connection")
+                raise RuntimeError("Could not establish TNC connection for packet backend")
+            logging.info("[PACKET_BACKEND] Server TNC connection established")
     
     def get_backend_type(self) -> BackendType:
         """Return the backend type."""

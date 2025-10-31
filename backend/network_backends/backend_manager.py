@@ -19,7 +19,7 @@ class NetworkBackendManager:
     backend implementations.
     """
     
-    def __init__(self, config_module, is_server: bool = False):
+    def __init__(self, config_module, is_server: bool = False, core_instance=None):
         """
         Initialize the backend manager.
         
@@ -29,8 +29,9 @@ class NetworkBackendManager:
         """
         self.config_module = config_module
         self.is_server = is_server
-        self.current_backend: Optional[NetworkBackend] = None
-        self.active_sessions = {}
+        self.core_instance = core_instance  # <-- NEW LINE
+        self.current_backend = None
+       
         
         # Initialize the backend based on configuration
         self._initialize_backend()
@@ -38,15 +39,24 @@ class NetworkBackendManager:
     def _initialize_backend(self):
         """Initialize the appropriate backend based on configuration."""
         try:
-            self.current_backend = create_backend_from_config(self.config_module, self.is_server)
+            self.current_backend = create_backend_from_config(self.config_module, self.is_server, self.core_instance)
             
             if self.current_backend is None:
-                # Legacy mode - signal that original system should be used
-                logging.info("[BACKEND_MGR] Legacy mode - using original system")
+                logging.info("[BACKEND_MGR] Legacy mode - no backend created")
             else:
+                # If packet backend, inject core reference
+                if self.current_backend.get_backend_type() == BackendType.PACKET:
+                    if self.core_instance:
+                        self.current_backend.core = self.core_instance
+                        self.current_backend.connection_manager = self.core_instance.connection_manager
+                        self.current_backend.packet_handler = self.core_instance.packet_handler
+                        self.current_backend.message_processor = self.core_instance.message_processor
+                        logging.info("[BACKEND_MGR] Injected Core references into PacketBackend")
+                    else:
+                        logging.warning("[BACKEND_MGR] PacketBackend created without core_instance")
+                
                 backend_type = self.current_backend.get_backend_type()
-                logging.info(f"[BACKEND_MGR] Initialized {backend_type.value} backend "
-                           f"for {'server' if self.is_server else 'client'}")
+                logging.info(f"[BACKEND_MGR] Initialized with {backend_type.value} backend")
                 
         except Exception as e:
             logging.error(f"[BACKEND_MGR] Failed to initialize backend: {e}")
