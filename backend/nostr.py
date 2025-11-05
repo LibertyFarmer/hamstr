@@ -522,6 +522,9 @@ def search_nostr(request_type, number, search_text=None):
                         await client.add_relays(NOSTR_RELAYS)
                         await client.connect()
                         
+                        # Give the client a moment to fully establish relay connections
+                        await asyncio.sleep(0.5)
+                        
                         events = []
                         for result in results:
                             try:
