@@ -39,7 +39,7 @@ class PacketProtocol(ProtocolHandler):
             logging.info("[PACKET] Waiting for response via packet protocol")
             
             # Use your existing response handling
-            response_string = self.core.receive_full_response(session, timeout)
+            response_string = self.core.receive_response(session)
             
             if response_string:
                 return {'data': response_string, 'protocol': 'packet'}
@@ -51,12 +51,16 @@ class PacketProtocol(ProtocolHandler):
             return None
     
     def _format_request_string(self, request_data: dict) -> str:
-        """Convert request dict to the string format your system expects."""
-        request_type = request_data.get('type', 'GET_NOTES')
+        """Convert request dict to the string format your system expects.
+        
+        Format: "GET_NOTES type|count|params"
+        """
+        request_type = request_data.get('type', 1)
         count = request_data.get('count', 2)
         params = request_data.get('params', '')
         
+        # Server expects: "GET_NOTES type|count|params" with pipes
         if params:
-            return f"{request_type} {count} {params}"
+            return f"GET_NOTES {request_type}|{count}|{params}"
         else:
-            return f"{request_type} {count}"
+            return f"GET_NOTES {request_type}|{count}"

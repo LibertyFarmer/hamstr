@@ -211,15 +211,19 @@ class ConnectionManager:
             self.core.sessions.pop(session.id, None)
             socketio_logger.info(f"[SESSION] Cleaned up session: {session.id}")
             logging.info(f"Cleaned up session: {session.id}")
-        if session.tnc_connection:
+        
+        # For server: Don't close the TNC connection - it's shared with ConnectionManager
+        # For client: The TNC connection is session-specific and should be closed
+        if session.tnc_connection and not self.is_server:
             try:
-                # Handle both socket and serial connection closing
+                # Only close for client sessions
                 if hasattr(session.tnc_connection, 'close'):
                     session.tnc_connection.close()
-                    logging.debug("Session TNC connection closed properly")
+                    logging.debug("Client TNC connection closed properly")
             except Exception as e:
                 socketio_logger.error(f"[TNC] Error closing TNC connection: {str(e)}")
                 logging.error(f"Error closing TNC connection: {str(e)}")
+        
         session.state = ModemState.DISCONNECTED
         session.tnc_connection = None
 
