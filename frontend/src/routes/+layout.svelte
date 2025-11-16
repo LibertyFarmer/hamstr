@@ -226,7 +226,7 @@
   }
 }
 
-  async function handleSubmitZap(zapData) {
+async function handleSubmitZap(zapData) {
   try {
     console.log('Sending zap data:', zapData);
 
@@ -256,7 +256,37 @@
     }
 
     if (result.success) {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Keep drawer open and wait for ZAP_PUBLISHED message
+      console.log('Zap API call succeeded, waiting for final confirmation...');
+      
+      // Wait for the ZAP_PUBLISHED message in the logs
+      const waitForZapComplete = new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+          const logs = $currentOperationLogs;
+          // Check if we've received the final zap published message
+          const zapPublished = logs.some(log => 
+            log.message.includes('ZAP_PUBLISHED') || 
+            log.message.includes('Zap live on NOSTR') ||
+            log.message.includes('Zap completed successfully')
+          );
+          
+          if (zapPublished) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100); // Check every 100ms
+        
+        // Timeout after 15 seconds as fallback
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          console.warn('Zap completion timeout - closing drawer anyway');
+          resolve();
+        }, 15000);
+      });
+      
+      await waitForZapComplete;
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       currentOperationLogs.set([]);
       progressDrawerOpen = false;
       

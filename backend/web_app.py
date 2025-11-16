@@ -1388,12 +1388,16 @@ def send_zap():
         # Execute radio operation in thread
         radio_thread = threading.Thread(target=radio_operation)
         radio_thread.start()
-        radio_thread.join(timeout=180)
         
-        if radio_thread.is_alive():
-            result_container[0] = {"success": False, "message": "Radio operation timeout"}
+        # Wait for thread to complete (no timeout - let it run)
+        radio_thread.join()
+        
+        # Return result or default error
+        result = result_container[0]
+        if result is None:
+            result = {"success": False, "message": "Unknown error - no result returned"}
             
-        return jsonify(result_container[0] or {"success": False, "message": "Unknown error"})
+        return jsonify(result)
         
     except Exception as e:
         socketio_logger.error(f"[CLIENT] Error creating zap note: {e}")
