@@ -49,9 +49,11 @@
       console.log('Zap operation ended - back to normal indicator');
     });
     
-    window.bottomNavComponent = {
-      handleRequestNotes
-    };
+window.bottomNavComponent = {
+  handleRequestNotes,
+  set progressDrawerOpen(value) { progressDrawerOpen = value; },
+  get progressDrawerOpen() { return progressDrawerOpen; }
+};
 
     return () => {
       window.removeEventListener('requestTypeSelected', handleRequestTypeSelected);

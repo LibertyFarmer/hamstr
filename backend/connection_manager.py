@@ -200,7 +200,7 @@ class ConnectionManager:
         logging.info(f"Handling disconnect request for session: {session.id}")
         if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
             session.state = ModemState.DISCONNECTING
-            self.core.send_ack(session)
+            self.core.send_ack(session)  # Back to generic ACK
             self.cleanup_session(session)
         else:
             socketio_logger.info(f"[SYSTEM] Session {session.id} already disconnecting or disconnected")

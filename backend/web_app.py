@@ -69,6 +69,7 @@ def init_db():
         # Add new columns if they don't exist
         new_columns = {
             'zapped': 'INTEGER DEFAULT 0',
+            'zap_amount': 'INTEGER DEFAULT 0',
             'replied': 'INTEGER DEFAULT 0', 
             'boosted': 'INTEGER DEFAULT 0',
             'quoted': 'INTEGER DEFAULT 0'
@@ -95,12 +96,12 @@ init_db()
 
 # API Routes
 @app.route('/api/notes/<note_id>/interaction', methods=['POST'])
-
 def update_note_interaction(note_id):
     """Update interaction status for a note (zapped, replied, boosted, quoted)"""
     try:
         data = request.get_json()
         interaction_type = data.get('type')  # 'zapped', 'replied', 'boosted', 'quoted'
+        zap_amount = data.get('amount', 0)  # NEW: Get zap amount if provided
         
         if interaction_type not in ['zapped', 'replied', 'boosted', 'quoted']:
             return jsonify({
@@ -113,7 +114,14 @@ def update_note_interaction(note_id):
         c = conn.cursor()
         
         # Update the specific interaction column
-        c.execute(f"UPDATE notes SET {interaction_type} = 1 WHERE id = ?", (note_id,))
+        if interaction_type == 'zapped' and zap_amount > 0:
+            # For zaps, increment the zap_amount (running total)
+            c.execute(f"UPDATE notes SET {interaction_type} = 1, zap_amount = COALESCE(zap_amount, 0) + ? WHERE id = ?", 
+                    (zap_amount, note_id))
+            socketio_logger.info(f"[DATABASE] Added {zap_amount} sats to note {note_id}, new total in zap_amount column")
+        else:
+            # For other interactions, just set the flag
+            c.execute(f"UPDATE notes SET {interaction_type} = 1 WHERE id = ?", (note_id,))
         
         if c.rowcount == 0:
             conn.close()
@@ -170,6 +178,8 @@ def get_notes_from_db(page=1, limit=10):
         
         if 'zapped' in existing_columns:
             interaction_columns.append('zapped')
+        if 'zap_amount' in existing_columns:  # NEW: Check for zap_amount
+            interaction_columns.append('zap_amount')
         if 'replied' in existing_columns:
             interaction_columns.append('replied')
         if 'boosted' in existing_columns:
@@ -182,7 +192,6 @@ def get_notes_from_db(page=1, limit=10):
         else:
             columns = base_columns
               
-
         # Execute query with available columns
         c.execute(f"""
             SELECT {columns}
@@ -194,6 +203,7 @@ def get_notes_from_db(page=1, limit=10):
         
         notes = []
         for row in c.fetchall():
+            # Base columns are always at indices 0-6
             note_dict = {
                 "id": row[0],
                 "content": row[1],
@@ -201,13 +211,42 @@ def get_notes_from_db(page=1, limit=10):
                 "pubkey": row[3],
                 "display_name": row[4],
                 "lud16": row[5],
-                "is_local": row[6],
-                # Default values for interaction columns if they don't exist
-                "zapped": bool(row[7]) if len(row) > 7 and 'zapped' in existing_columns else False,
-                "replied": bool(row[8]) if len(row) > 8 and 'replied' in existing_columns else False,
-                "boosted": bool(row[9]) if len(row) > 9 and 'boosted' in existing_columns else False,
-                "quoted": bool(row[10]) if len(row) > 10 and 'quoted' in existing_columns else False
+                "is_local": row[6]
             }
+            
+            # Dynamically assign interaction columns based on their position
+            col_index = 7
+            if 'zapped' in existing_columns:
+                note_dict["zapped"] = bool(row[col_index]) if len(row) > col_index else False
+                col_index += 1
+            else:
+                note_dict["zapped"] = False
+            
+            # NEW: Handle zap_amount
+            if 'zap_amount' in existing_columns:
+                note_dict["zap_amount"] = row[col_index] if len(row) > col_index else 0
+                col_index += 1
+            else:
+                note_dict["zap_amount"] = 0
+            
+            if 'replied' in existing_columns:
+                note_dict["replied"] = bool(row[col_index]) if len(row) > col_index else False
+                col_index += 1
+            else:
+                note_dict["replied"] = False
+            
+            if 'boosted' in existing_columns:
+                note_dict["boosted"] = bool(row[col_index]) if len(row) > col_index else False
+                col_index += 1
+            else:
+                note_dict["boosted"] = False
+            
+            if 'quoted' in existing_columns:
+                note_dict["quoted"] = bool(row[col_index]) if len(row) > col_index else False
+                col_index += 1
+            else:
+                note_dict["quoted"] = False
+            
             notes.append(note_dict)
                 
         has_more = (offset + limit) < total_count

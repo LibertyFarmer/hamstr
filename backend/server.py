@@ -571,11 +571,22 @@ class Server:
                         try:
                             logging.info("About to process request")
                             response = self.process_request(message)
-                            logging.info(f"Process request returned: {type(response)}")
+                            
                             if response is None:
                                 logging.error("Process request returned None")
                                 continue
-                            logging.info(f"About to send response of type: {type(response)}")
+                            
+                            # Parse response to log meaningful info
+                            try:
+                                import json
+                                response_data = json.loads(response)
+                                if isinstance(response_data, dict) and 'events' in response_data:
+                                    note_count = len(response_data['events'])
+                                    logging.info(f"Successfully prepared {note_count} note(s) for transmission")
+                                else:
+                                    logging.info(f"Prepared response for transmission")
+                            except:
+                                logging.info(f"Prepared response for transmission")
                             
                             if self.core.send_response(session, response):
                                 logging.info("Response sent successfully")

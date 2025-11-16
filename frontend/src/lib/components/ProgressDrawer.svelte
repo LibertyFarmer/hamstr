@@ -9,7 +9,7 @@ const dispatch = createEventDispatcher();
 export let hidden = true;
 export let currentOperationLogs = writable([]);
 export let clearOperationLogs = () => {};
-export let isSending = false;
+export const isSending = false;
 
 let logContainer;
 let translatedMessages = [];
@@ -18,12 +18,6 @@ let connectionStatus = 'DISCONNECTED';
 
 $: if (hidden) {
  dispatch('drawerClosed');
-}
-
-$: if (hidden && isSending) {
- dispatch('drawerClosed');
- currentOperationLogs.set([]);
- translatedMessages = [];
 }
 
 function formatTime(timestamp) {
