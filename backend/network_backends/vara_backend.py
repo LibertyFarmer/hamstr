@@ -239,136 +239,137 @@ class VARABackend(NetworkBackend):
             return ('UNKNOWN', 0)
     
     def connect(self, remote_callsign: tuple) -> Optional[VARASession]:
-        """
-        Establish VARA connection to remote station.
-        
-        Args:
-            remote_callsign: Tuple of (callsign, ssid)
+            """
+            Establish VARA connection to remote station.
             
-        Returns:
-            VARASession if successful, None if failed
-        """
-        self._update_status(BackendStatus.CONNECTING)
-        
-        # Parse local callsign
-        local_call, local_ssid = self._parse_callsign(self.my_callsign)
-        remote_call, remote_ssid = remote_callsign
-        
-        # Session key for tracking
-        session_key = f"{remote_call}-{remote_ssid}"
-        
-        command_sock = None
-        data_sock = None
-        
-        try:
-            # 1. Connect to VARA command port
-            logging.info(f"[VARA_BACKEND] Connecting to VARA command port {self.vara_host}:{self.command_port}")
-            command_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            command_sock.connect((self.vara_host, self.command_port))
-            
-            # 2. Setup VARA configuration
-            time.sleep(1)  # Let connection stabilize
-            
-            if not self._send_vara_command(command_sock, f"MYCALL {local_call}-{local_ssid}"):
-                raise Exception("Failed to set MYCALL")
+            Args:
+                remote_callsign: Tuple of (callsign, ssid)
                 
-            if not self._send_vara_command(command_sock, f"BW{self.bandwidth}"):
-                raise Exception("Failed to set bandwidth")
-                
-            if not self._send_vara_command(command_sock, f"CHAT {self.chat_mode}"):
-                raise Exception("Failed to set chat mode")
+            Returns:
+                VARASession if successful, None if failed
+            """
+            self._update_status(BackendStatus.CONNECTING)
             
-            # 3. Establish connection (client connects, server listens)
-            if self.is_server:
-                # Server: Listen for incoming connections
-                if not self._send_vara_command(command_sock, "LISTEN ON"):
-                    raise Exception("Failed to start listening")
+            # Parse callsigns
+            local_call, local_ssid = self._parse_callsign(self.my_callsign)
+            remote_call, remote_ssid = remote_callsign
+            
+            # Session key for tracking
+            session_key = f"{remote_call}-{remote_ssid}"
+            
+            command_sock = None
+            data_sock = None
+            
+            try:
+                if self.is_server:
+                    # SERVER: Reuse existing listening command socket
+                    if not self._listening_command_socket:
+                        raise Exception("Server not initialized - VARA listening socket not available")
                     
-                logging.info(f"[VARA_BACKEND] Server listening for connections...")
-                
-                # Wait for client connection
-                connected = False
-                start_time = time.time()
-                while time.time() - start_time < self.connection_timeout and not connected:
-                    try:
-                        command_sock.settimeout(2)
-                        data = command_sock.recv(1024)
-                        if data:
-                            messages = data.decode('ascii', errors='ignore').strip()
-                            for line in messages.split('\r'):
-                                line = line.strip()
-                                if line and line.startswith("CONNECTED"):
-                                    connected = True
-                                    logging.info(f"[VARA_BACKEND] Client connected!")
-                                    break
-                    except socket.timeout:
-                        continue
-                
-                if not connected:
-                    raise Exception("Timeout waiting for client connection")
+                    command_sock = self._listening_command_socket
+                    logging.info(f"[VARA_BACKEND] Server waiting for incoming connection...")
                     
-            else:
-                # Client: Connect to server
-                connect_cmd = f"CONNECT {local_call}-{local_ssid} {remote_call}-{remote_ssid}"
-                if not self._send_vara_command(command_sock, connect_cmd):
-                    raise Exception("Failed to initiate connection")
+                    # Wait for client connection on existing listening socket (no timeout - wait forever)
+                    connected = False
+                    while not connected:
+                        try:
+                            command_sock.settimeout(2)
+                            data = command_sock.recv(1024)
+                            if data:
+                                messages = data.decode('ascii', errors='ignore').strip()
+                                for line in messages.split('\r'):
+                                    line = line.strip()
+                                    if line and line.startswith("CONNECTED"):
+                                        connected = True
+                                        logging.info(f"[VARA_BACKEND] Client connected!")
+                                        break
+                        except socket.timeout:
+                            continue
+                    
+                    if not connected:
+                        raise Exception("Timeout waiting for client connection")
+                        
+                else:
+                    # CLIENT: Create new command socket and connect
+                    logging.info(f"[VARA_BACKEND] Connecting to VARA command port {self.vara_host}:{self.command_port}")
+                    command_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    command_sock.connect((self.vara_host, self.command_port))
+                    
+                    # Setup VARA configuration
+                    time.sleep(1)  # Let connection stabilize
+                    
+                    if not self._send_vara_command(command_sock, f"MYCALL {local_call}-{local_ssid}"):
+                        raise Exception("Failed to set MYCALL")
+                        
+                    if not self._send_vara_command(command_sock, f"BW{self.bandwidth}"):
+                        raise Exception("Failed to set bandwidth")
+                        
+                    if not self._send_vara_command(command_sock, f"CHAT {self.chat_mode}"):
+                        raise Exception("Failed to set chat mode")
+                    
+                    # Connect to server
+                    connect_cmd = f"CONNECT {local_call}-{local_ssid} {remote_call}-{remote_ssid}"
+                    if not self._send_vara_command(command_sock, connect_cmd):
+                        raise Exception("Failed to initiate connection")
+                    
+                    # Wait for connection establishment
+                    connected = False
+                    start_time = time.time()
+                    while time.time() - start_time < self.connection_timeout and not connected:
+                        try:
+                            command_sock.settimeout(2)
+                            data = command_sock.recv(1024)
+                            if data:
+                                messages = data.decode('ascii', errors='ignore').strip()
+                                for line in messages.split('\r'):
+                                    line = line.strip()
+                                    if line and line.startswith("CONNECTED"):
+                                        connected = True
+                                        logging.info(f"[VARA_BACKEND] Connected to {remote_call}-{remote_ssid}")
+                                        break
+                        except socket.timeout:
+                            continue
+                    
+                    if not connected:
+                        raise Exception(f"Failed to connect to {remote_call}-{remote_ssid}")
                 
-                # Wait for connection establishment
-                connected = False
-                start_time = time.time()
-                while time.time() - start_time < self.connection_timeout and not connected:
+                # Connect to data port after connection established (both client and server)
+                logging.info(f"[VARA_BACKEND] Connecting to data port {self.vara_host}:{self.data_port}")
+                time.sleep(2)  # Let connection stabilize
+                
+                data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                data_sock.settimeout(10)
+                data_sock.connect((self.vara_host, self.data_port))
+                
+                # Create session object
+                session = VARASession(command_sock, data_sock, remote_callsign)
+                self._active_sessions[session_key] = session
+                
+                self._update_status(BackendStatus.CONNECTED)
+                logging.info(f"[VARA_BACKEND] VARA connection established with {remote_call}-{remote_ssid}")
+                
+                return session
+                
+            except Exception as e:
+                logging.error(f"[VARA_BACKEND] Connection failed: {e}")
+                self._update_status(BackendStatus.ERROR)
+                
+                # Cleanup on failure
+                if data_sock:
                     try:
-                        command_sock.settimeout(2)
-                        data = command_sock.recv(1024)
-                        if data:
-                            messages = data.decode('ascii', errors='ignore').strip()
-                            for line in messages.split('\r'):
-                                line = line.strip()
-                                if line and line.startswith("CONNECTED"):
-                                    connected = True
-                                    logging.info(f"[VARA_BACKEND] Connected to {remote_call}-{remote_ssid}")
-                                    break
-                    except socket.timeout:
-                        continue
+                        data_sock.close()
+                    except:
+                        pass
                 
-                if not connected:
-                    raise Exception(f"Failed to connect to {remote_call}-{remote_ssid}")
-            
-            # 4. Connect to data port after connection established
-            logging.info(f"[VARA_BACKEND] Connecting to data port {self.vara_host}:{self.data_port}")
-            time.sleep(2)  # Let connection stabilize
-            
-            data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            data_sock.settimeout(10)
-            data_sock.connect((self.vara_host, self.data_port))
-            
-            # 5. Create session object
-            session = VARASession(command_sock, data_sock, remote_callsign)
-            self._active_sessions[session_key] = session
-            
-            self._update_status(BackendStatus.CONNECTED)
-            logging.info(f"[VARA_BACKEND] VARA connection established with {remote_call}-{remote_ssid}")
-            
-            return session
-            
-        except Exception as e:
-            logging.error(f"[VARA_BACKEND] Connection failed: {e}")
-            self._update_status(BackendStatus.ERROR)
-            
-            # Cleanup on failure
-            if data_sock:
-                try:
-                    data_sock.close()
-                except:
-                    pass
-            if command_sock:
-                try:
-                    self._send_vara_command(command_sock, "DISCONNECT")
-                    command_sock.close()
-                except:
-                    pass
-            
-            return None
+                # Only close command socket if it's a client connection (not the server's listening socket)
+                if command_sock and not self.is_server:
+                    try:
+                        self._send_vara_command(command_sock, "DISCONNECT")
+                        command_sock.close()
+                    except:
+                        pass
+                
+                return None
     
     def send_data(self, session: VARASession, data: bytes) -> bool:
         """
@@ -467,15 +468,13 @@ class VARABackend(NetworkBackend):
                         # Unwrap KISS to get AX.25 frame
                         ax25_frame = kiss_unwrap(kiss_frame)
                         if ax25_frame and len(ax25_frame) > 16:
-                            # Extract message payload (skip AX.25 header)
-                            # Use clean_message to handle protocol bytes properly
-                            from ax25_kiss_utils import clean_message
-                            message_data = clean_message(ax25_frame)
+                            # Extract message payload (skip 16-byte AX.25 header)
+                            message_data = ax25_frame[16:]
                             session.update_activity()
                             
-                            logging.debug(f"[VARA_BACKEND] Received {len(message_data)} bytes via VARA/KISS")
+                            logging.info(f"[VARA_BACKEND] Received {len(message_data)} bytes via VARA/KISS")
                             return message_data
-                
+                                        
                 except socket.timeout:
                     # Check command socket for disconnect
                     if self._check_disconnection(session):

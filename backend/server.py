@@ -536,6 +536,7 @@ class Server:
                 
             except Exception as e:
                 logging.error(f"[SERVER] DirectProtocol error: {e}")
+                return  # Don't fall through to packet protocol!
         
         # OLD CODE INSERTION POINT: Insert your original code starting here
         logging.info("[SERVER] Using packet protocol")

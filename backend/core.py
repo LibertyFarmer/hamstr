@@ -252,7 +252,12 @@ class Core:
         return self.packet_handler.split_message(message)
 
     def handle_incoming_connection(self):
-        return self.connection_manager.handle_incoming_connection()
+        if self.use_backend_system:
+            # For VARA backend - listen for incoming connection
+            # Pass a dummy tuple that will be ignored for server mode
+            return self.backend_manager.connect(('ANY', 0))
+        else:
+            return self.connection_manager.handle_incoming_connection()
 
     def send_data_request(self, session, request):
         return self.message_processor.send_data_request(session, request)
