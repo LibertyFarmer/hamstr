@@ -9,8 +9,13 @@ import socket
 import logging
 import time
 import threading
+import json
 from typing import Optional, Dict, Any, Tuple
 from .base_backend import NetworkBackend, BackendType, BackendStatus
+
+# Import logging
+from socketio_logger import get_socketio_logger
+socketio_logger = get_socketio_logger()
 
 # Import existing HAMSTR utilities (don't modify these)
 import sys
@@ -34,7 +39,9 @@ class VARASession:
         self.connected = True
         self.last_activity = time.time()
         self._lock = threading.Lock()
-        
+        self._receive_buffers = {}  # session_key -> bytes buffer
+        self._json_buffers = {}     # session_key -> bytes buffer
+
         # Legacy compatibility attributes that HAMSTR expects
         self.id = f"{remote_callsign[0]}-{remote_callsign[1]}"
         self.tnc_connection = data_socket  # Point to data socket for compatibility
@@ -385,6 +392,7 @@ class VARABackend(NetworkBackend):
         try:
             if not session or not session.connected:
                 logging.error("[VARA_BACKEND] No active session for sending data")
+                socketio_logger.error("[CONTROL] No active session")
                 return False
             
             # Parse local and remote callsigns for AX.25 frame
@@ -400,29 +408,32 @@ class VARABackend(NetworkBackend):
             # Wrap in KISS protocol
             kiss_frame = kiss_wrap(ax25_frame)
             
-            # Debug what we're sending
-            logging.debug(f"[VARA_BACKEND] Sending {len(data)} bytes payload, "
-                         f"{len(kiss_frame)} bytes KISS frame")
+            # Log transmission with socketio
+            socketio_logger.info(f"[CONTROL] Sending via VARA ({len(data)} bytes)")
+            logging.debug(f"[VARA_BACKEND] Sending {len(data)} bytes payload, {len(kiss_frame)} bytes KISS frame")
             
             # Send via VARA data port
             session.data_socket.sendall(kiss_frame)
             session.update_activity()
             
+            socketio_logger.info(f"[CONTROL] Data sent successfully")
             logging.debug(f"[VARA_BACKEND] Sent {len(data)} bytes via VARA/KISS")
             return True
             
         except Exception as e:
             logging.error(f"[VARA_BACKEND] Send failed: {e}")
+            socketio_logger.error(f"[CONTROL] Send failed: {e}")
             session.connected = False
             return False
     
     def receive_data(self, session: VARASession, timeout: int = 30) -> Optional[bytes]:
         """
-        Receive data from VARA using KISS protocol.
+        Receive data from VARA using KISS protocol with continuous monitoring.
+        Uses persistent buffers across calls to handle split messages.
         
         Args:
             session: Active VARA session
-            timeout: Timeout in seconds
+            timeout: Total timeout in seconds
             
         Returns:
             Received bytes if successful, None if timeout/error
@@ -432,67 +443,131 @@ class VARABackend(NetworkBackend):
                 logging.error("[VARA_BACKEND] No active session for receiving data")
                 return None
             
-            # Set timeout on data socket
-            session.data_socket.settimeout(timeout)
+            # Get session key for persistent buffers
+            session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
             
-            # Buffer for incomplete KISS frames
-            buffer = b''
+            # Use persistent buffers for this session (survives across calls)
+            if not hasattr(self, '_receive_buffers'):
+                self._receive_buffers = {}
+                self._json_buffers = {}
+            
+            if session_key not in self._receive_buffers:
+                self._receive_buffers[session_key] = b''
+                self._json_buffers[session_key] = b''
+            
+            buffer = self._receive_buffers[session_key]
+            json_buffer = self._json_buffers[session_key]
+            
+            logging.debug(f"[VARA_BACKEND] Starting receive with {timeout}s timeout, existing buffer: {len(buffer)} bytes, json: {len(json_buffer)} bytes")
+            
             start_time = time.time()
             
+            # Continuously monitor data port
             while time.time() - start_time < timeout:
                 try:
-                    # Receive data
-                    new_data = session.data_socket.recv(1024)
-                    if not new_data:
+                    # Check for incoming data with 1-second timeout
+                    session.data_socket.settimeout(1)
+                    chunk = session.data_socket.recv(1024)
+                    
+                    if not chunk:
                         # Connection closed
                         session.connected = False
+                        logging.warning("[VARA_BACKEND] Connection closed")
+                        # Clear buffers on disconnect
+                        if session_key in self._receive_buffers:
+                            del self._receive_buffers[session_key]
+                            del self._json_buffers[session_key]
                         return None
                     
-                    buffer += new_data
+                    buffer += chunk
+                    socketio_logger.info(f"[PACKET] Receiving data via VARA...")
+                    #logging.info(f"[VARA_BACKEND] *** RAW CHUNK ({len(chunk)} bytes): {chunk[:100]}")
+                    #logging.info(f"[VARA_BACKEND] *** BUFFER SIZE: {len(buffer)} bytes")
                     
-                    # Process complete KISS frames (pattern from vara_test.py)
-                    while True:
-                        # Look for KISS frame boundaries (FEND = 0xC0)
+                    # Process complete KISS frames
+                    while b'\xc0' in buffer:
                         fend_start = buffer.find(b'\xc0')
-                        if fend_start == -1:
-                            break
-                            
                         fend_end = buffer.find(b'\xc0', fend_start + 1)
+                        
                         if fend_end == -1:
-                            break  # Incomplete frame
+                            # Incomplete frame, keep buffering
+                            logging.debug("[VARA_BACKEND] Incomplete KISS frame, waiting for more data")
+                            break
                         
                         # Extract complete KISS frame
                         kiss_frame = buffer[fend_start:fend_end + 1]
                         buffer = buffer[fend_end + 1:]
                         
+                       # logging.info(f"[VARA_BACKEND] *** KISS FRAME ({len(kiss_frame)} bytes): {kiss_frame[:50]}")
+                        
                         # Unwrap KISS to get AX.25 frame
                         ax25_frame = kiss_unwrap(kiss_frame)
-                        if ax25_frame and len(ax25_frame) > 16:
-                            # Extract message payload (skip 16-byte AX.25 header)
-                            message_data = ax25_frame[16:]
-                            session.update_activity()
+                        if ax25_frame and len(ax25_frame) > 17:
+                          #  logging.info(f"[VARA_BACKEND] *** AX25 FRAME ({len(ax25_frame)} bytes): {ax25_frame[:50]}")
                             
-                            logging.info(f"[VARA_BACKEND] Received {len(message_data)} bytes via VARA/KISS")
-                            return message_data
-                                        
+                            # Skip AX.25 header (16 bytes) + control byte (1 byte) = 17 bytes
+                            payload = ax25_frame[17:]
+                            json_buffer += payload
+                            
+                           # logging.info(f"[VARA_BACKEND] *** PAYLOAD ({len(payload)} bytes): {payload[:100]}")
+                           # logging.info(f"[VARA_BACKEND] *** JSON BUFFER ({len(json_buffer)} bytes): {json_buffer[:100]}")
+                            
+                            # Try to decode as complete JSON
+                            try:
+                                json_str = json_buffer.decode('utf-8')
+                                # Validate it's complete JSON
+                                import json as json_module
+                                json_module.loads(json_str)
+                                
+                                session.update_activity()
+                                socketio_logger.info(f"[PACKET] Received complete message ({len(json_buffer)} bytes)")
+                                logging.info(f"[VARA_BACKEND] *** COMPLETE JSON MESSAGE: {json_str}")
+                                
+                                # Clear buffers on success
+                                self._receive_buffers[session_key] = b''
+                                self._json_buffers[session_key] = b''
+                                
+                                return json_buffer
+                                
+                            except UnicodeDecodeError as e:
+                                logging.debug(f"[VARA_BACKEND] Unicode decode error (buffering): {e}")
+                                continue
+                            except json_module.JSONDecodeError as e:
+                                logging.debug(f"[VARA_BACKEND] Incomplete JSON (buffering): {e}")
+                                continue
+                        else:
+                            logging.debug(f"[VARA_BACKEND] AX25 frame too short or invalid: {len(ax25_frame) if ax25_frame else 0} bytes")
+                        
                 except socket.timeout:
-                    # Check command socket for disconnect
-                    if self._check_disconnection(session):
-                        session.connected = False
-                        return None
-                    continue
+                    # 1-second timeout - check if session still active
+                    elapsed = time.time() - start_time
+                    logging.debug(f"[VARA_BACKEND] Socket timeout, elapsed: {elapsed:.1f}s/{timeout}s")
                     
-                except Exception as e:
-                    logging.error(f"[VARA_BACKEND] Receive error: {e}")
-                    session.connected = False
-                    return None
+                    if not session.is_active():
+                        logging.warning("[VARA_BACKEND] Session inactive")
+                        session.connected = False
+                        # Clear buffers on disconnect
+                        if session_key in self._receive_buffers:
+                            del self._receive_buffers[session_key]
+                            del self._json_buffers[session_key]
+                        return None
+                        
+                    # Save buffers and continue
+                    self._receive_buffers[session_key] = buffer
+                    self._json_buffers[session_key] = json_buffer
+                    continue
             
-            # Timeout reached
-            logging.debug(f"[VARA_BACKEND] Receive timeout after {timeout}s")
+            # Timeout - save buffers for next call
+            self._receive_buffers[session_key] = buffer
+            self._json_buffers[session_key] = json_buffer
+            
+            logging.debug(f"[VARA_BACKEND] Receive timeout after {timeout}s, buffer: {len(buffer)} bytes, json_buffer: {len(json_buffer)} bytes")
             return None
             
         except Exception as e:
-            logging.error(f"[VARA_BACKEND] Receive failed: {e}")
+            logging.error(f"[VARA_BACKEND] Receive error: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             session.connected = False
             return None
     
@@ -524,20 +599,21 @@ class VARABackend(NetworkBackend):
             return True  # Assume disconnected on error
     
     def disconnect(self, session: VARASession) -> bool:
-        """
-        Disconnect VARA session gracefully.
-        
-        Args:
-            session: Session to disconnect
-            
-        Returns:
-            True if successful
-        """
+        """Disconnect session and clean up sockets."""
+        logging.info(f"[VARA_BACKEND] disconnect() called for {session.remote_callsign}")
         try:
-            if not session:
-                return True
-            
             session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
+            
+            # Send disconnect message to remote before closing
+            if session.data_socket and session.connected:
+                try:
+                    disconnect_msg = json.dumps({'type': 'DISCONNECT'}).encode('utf-8')
+                #    print(f"DEBUG: Sending DISCONNECT message: {disconnect_msg}")
+                    self.send_data(session, disconnect_msg)
+               #     logging.info("[VARA_BACKEND] Sent DISCONNECT message")
+                except Exception as e:
+                    print(f"DEBUG: Failed to send DISCONNECT: {e}")
+                    pass  # Best effort
             
             # Close data socket
             if session.data_socket:
@@ -545,14 +621,21 @@ class VARABackend(NetworkBackend):
                     session.data_socket.close()
                 except:
                     pass
+                session.data_socket = None
             
-            # Send disconnect command and close command socket
-            if session.command_socket:
+            # Client closes command socket, server keeps it for reuse
+            if not self.is_server and session.command_socket:
                 try:
-                    self._send_vara_command(session.command_socket, "DISCONNECT")
                     session.command_socket.close()
                 except:
                     pass
+                session.command_socket = None
+            
+            # Clear buffers
+            if hasattr(self, '_receive_buffers') and session_key in self._receive_buffers:
+                del self._receive_buffers[session_key]
+            if hasattr(self, '_json_buffers') and session_key in self._json_buffers:
+                del self._json_buffers[session_key]
             
             # Remove from active sessions
             if session_key in self._active_sessions:
@@ -561,7 +644,7 @@ class VARABackend(NetworkBackend):
             session.connected = False
             self._update_status(BackendStatus.DISCONNECTED)
             
-            logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign[0]}-{session.remote_callsign[1]}")
+            logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign}")
             return True
             
         except Exception as e:

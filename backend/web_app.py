@@ -153,7 +153,7 @@ def get_notes():
     limit = request.args.get('limit', 10, type=int)
     notes = get_notes_from_db(page, limit)
     response = jsonify(notes)
-    socketio_logger.info(f"[API] Returning notes response: {response.get_data(as_text=True)}")
+    # socketio_logger.info(f"[API] Returning notes response.")
     return response
 
 

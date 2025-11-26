@@ -46,6 +46,14 @@ class Client:
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
+             # Log connection based on backend type
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend_type = self.core.backend_manager.get_backend_type()
+                if backend_type.value == 'vara':
+                    socketio_logger.info(f"[SESSION] CONNECTED via VARA to {server_callsign[0]}-{server_callsign[1]}")
+                else:
+                    socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
+            
             # Add a moderate stabilization delay after connection established
             time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
 
@@ -75,11 +83,14 @@ class Client:
                     request_data['params'] = additional_params
                 
                 # Send via protocol layer
+                socketio_logger.info(f"[CONTROL] Sending {request_type.value} request via VARA")
                 success = self.core.protocol_manager.send_nostr_request(self.session, request_data)
                 
                 if success:
                     # Receive response via protocol layer
-                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
+                    print(f"DEBUG: About to call receive_nostr_response")
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=180)
+                    print(f"DEBUG: Got response: {response}")
                     
                     if response:
                         # Handle response based on protocol type
@@ -98,15 +109,36 @@ class Client:
                                     error_type = parsed_response.get('error_type')
                                     error_message = parsed_response.get('message')
                                     socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
+                                    if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                                        socketio_logger.info("[SESSION] Client initiating disconnect")
+                                        self.core.backend_manager.disconnect(self.session)
+                                        self.session = None
                                     return True, response_data
                             except json.JSONDecodeError:
                                 pass  # Not an error response, continue normal processing
                             
                             # Decompress and return response
                             decompressed_response = decompress_nostr_data(response_data)
-                            socketio_logger.info(f"[CLIENT] Received response via protocol layer")
+                            socketio_logger.info(f"[PACKET] Response received via VARA")
                             logging.info(f"Protocol response received: {len(decompressed_response)} chars")
+                           
+                            # Disconnect VARA session before returning
+                            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                                socketio_logger.info("[SESSION] Client initiating disconnect")
+                                time.sleep(2)  # Wait for server to finish sending
+                                # Send disconnect message before closing
+                                try:
+                                    disconnect_msg = json.dumps({'type': 'DISCONNECT'}).encode('utf-8')
+                                    self.core.backend_manager.send_data(self.session, disconnect_msg)
+                                    print("DEBUG: Sent DISCONNECT from client.py")
+                                    time.sleep(1)  # Give server time to receive
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to send disconnect: {e}")
+                                self.core.backend_manager.disconnect(self.session)
+                                self.session = None
+                            
                             return True, response_data
+
                         else:
                             socketio_logger.error("[CLIENT] Empty response from protocol layer")
                             return False, None
@@ -281,6 +313,18 @@ class Client:
         socketio_logger.info("[SESSION] Client initiating disconnect [CLIENT_DISCONNECT]")
         logging.info("Client initiating disconnect [CLIENT_DISCONNECT]")
         if self.session and self.session.state != ModemState.DISCONNECTED:
+            # Check if using VARA backend - use direct disconnect
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend_type = self.core.backend_manager.get_backend_type()
+                if backend_type.value == 'vara':
+                    socketio_logger.info("[SESSION] VARA disconnect")
+                    self.core.backend_manager.disconnect(self.session)
+                    self.session = None
+                    socketio_logger.info("[SYSTEM] Client disconnect complete [CLIENT_DISCONNECT_COMPLETE]")
+                    logging.info("Client disconnect complete [CLIENT_DISCONNECT_COMPLETE]")
+                    return
+            
+            # Packet protocol disconnect
             if self.core.send_disconnect(self.session):
                 if self.core.wait_for_ack(self.session, timeout=config.DISCONNECT_TIMEOUT):
                     socketio_logger.info("[CLIENT] Disconnect acknowledged by server")

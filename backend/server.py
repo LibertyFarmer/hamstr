@@ -497,46 +497,80 @@ class Server:
     def handle_connected_session(self, session):
         logging.info(f"Handling session for {session.remote_callsign}")
         
-        # NEW: DirectProtocol detection and handling
-        if (hasattr(self.core, 'protocol_manager') and 
-            self.core.protocol_manager and 
-            self.core.protocol_manager.get_protocol_type() == 'DirectProtocol'):
+        # NEW: DirectProtocol path (VARA, Reticulum)
+        if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+            protocol_type = self.core.protocol_manager.get_protocol_type()
             
-            logging.info("[SERVER] Using DirectProtocol - waiting for JSON request")
-            
-            try:
-                # Wait for direct JSON request (no packet protocol)
-                request_data = self.core.protocol_manager.receive_nostr_response(session, timeout=30)
+            if protocol_type == 'DirectProtocol':
+                logging.info("[SERVER] Using DirectProtocol - waiting for client requests")
                 
-                if request_data:
-                    logging.info(f"[SERVER] Received DirectProtocol request: {request_data.get('type')}")
+                try:
+                    # Server WAITS for client to send first - continuous loop
+                    consecutive_timeouts = 0
+                    while session.connected and self.running:
+                        request_data = self.core.protocol_manager.receive_nostr_response(session, timeout=1)
+                        
+                        if request_data:
+                            consecutive_timeouts = 0  # Reset counter
+                            # ... process request ...
+                        else:
+                            consecutive_timeouts += 1
+                            if consecutive_timeouts >= 30:  # After 30 timeouts (30 seconds), break
+                                logging.info("[SERVER] No activity, ending session")
+                                break
+                            if not self.running:
+                                logging.info("[SERVER] Server stopping")
+                                break
+                        
+                        if request_data:
+                            # Check for disconnect message
+                            if request_data.get('type') == 'DISCONNECT':
+                                logging.info("[SERVER] Received DISCONNECT from client")
+                                break
+                            
+                            logging.info(f"[SERVER] Received DirectProtocol request: {request_data.get('type')}")
+                            
+                            # Convert to format process_request expects
+                            request_type = request_data.get('type', 'GET_NOTES')  
+                            count = request_data.get('count', 2)
+                            params = request_data.get('params', '')
+                            
+                            # Build proper request string: "GET_NOTES type|count|params"
+                            if params:
+                                request_string = f"GET_NOTES {request_type}|{count}|{params}"
+                            else:
+                                request_string = f"GET_NOTES {request_type}|{count}"
+                            
+                            logging.info(f"[SERVER] Processing: {request_string}")
+                            
+                            # Process and send response
+                            response = self.process_request(request_string)
+                            response_data = {'data': response}
+                            success = self.core.protocol_manager.send_nostr_request(session, response_data)
+                            
+                            if success:
+                                logging.info("[SERVER] DirectProtocol response sent")
+                                # Don't break - continue loop to wait for client disconnect
+                            else:
+                                logging.error("[SERVER] Failed to send DirectProtocol response")
+                                break
+                        else:
+                            # Timeout - check if still connected
+                            if not self.core.backend_manager.is_connected(session):
+                                logging.info("[SERVER] Client disconnected")
+                                break
+                                
+                    logging.info("[SERVER] DirectProtocol session ended")
+
+                    # Disconnect VARA session
+                    if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                        self.core.backend_manager.disconnect(session)
+
+                    return
                     
-                    # Convert to format your existing process_request expects
-                    request_type = request_data.get('type', 'GET_NOTES')
-                    count = request_data.get('count', 2)
-                    params = request_data.get('params', '')
-                    
-                    if params:
-                        request_string = f"{request_type} {count} {params}"
-                    else:
-                        request_string = f"{request_type} {count}"
-                    
-                    # Use your existing process_request method
-                    response = self.process_request(request_string)
-                    
-                    # Send response back via DirectProtocol
-                    response_data = {'data': response}
-                    success = self.core.protocol_manager.send_nostr_request(session, response_data)
-                    
-                    if success:
-                        logging.info("[SERVER] DirectProtocol response sent")
-                        return  # Done - exit the method
-                    else:
-                        logging.error("[SERVER] Failed to send DirectProtocol response")
-                
-            except Exception as e:
-                logging.error(f"[SERVER] DirectProtocol error: {e}")
-                return  # Don't fall through to packet protocol!
+                except Exception as e:
+                    logging.error(f"[SERVER] DirectProtocol error: {e}")
+                    return
         
         # OLD CODE INSERTION POINT: Insert your original code starting here
         logging.info("[SERVER] Using packet protocol")

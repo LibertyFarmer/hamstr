@@ -76,7 +76,21 @@ class PacketBackend(NetworkBackend):
         try:
             self._update_status(BackendStatus.CONNECTING)
             
-            # Use existing connection manager logic
+            # SERVER: Don't connect, wait for incoming connection
+            if self.is_server:
+                logging.info("[PACKET_BACKEND] Server waiting for incoming connection...")
+                # Use the existing connection manager's handle_incoming_connection
+                session = self.connection_manager.handle_incoming_connection()
+                
+                if session:
+                    self._update_status(BackendStatus.CONNECTED)
+                    logging.info(f"[PACKET_BACKEND] Server accepted connection from {session.remote_callsign}")
+                    return session
+                else:
+                    self._update_status(BackendStatus.DISCONNECTED)
+                    return None
+            
+            # CLIENT: Initiate connection
             if not self.connection_manager.tnc_connection:
                 # Start the connection manager (establishes TNC connection)
                 if not self.connection_manager.start():
