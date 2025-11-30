@@ -544,34 +544,55 @@ class Server:
                             
                             
                             # Process and send response
+                            logging.info(f"[SERVER] Processing: {request_string}")
+                        
+                        
+                            # Process and send response
                             response = self.process_request(request_string)
                             response_data = {'data': response}
                             success = self.core.protocol_manager.send_nostr_request(session, response_data)
                             
                             if success:
                                 logging.info("[SERVER] DirectProtocol response sent")
+                                
+                                # Wait for VARA to finish transmitting
+                                logging.info("[SERVER] Waiting for VARA to complete transmission...")
+                                backend = getattr(self.core.backend_manager, '_backend', None)
+                                if backend and hasattr(backend, '_wait_for_vara_tx_complete'):
+                                    backend._wait_for_vara_tx_complete(timeout=120)
+                                else:
+                                    # Fallback for non-VARA backends
+                                    time.sleep(1)
+                                
                                 protocol = self.core.protocol_manager
                                 
-                                # 1. Send DONE
-                                logging.info("[CONTROL] Sending DONE to client")
-                                protocol.send_control_message(session, 'DONE')
-                                
-                                # 2. Wait for DONE_ACK
-                                logging.info("[CONTROL] Waiting for DONE_ACK")
-                                if protocol.wait_for_control_message(session, 'DONE_ACK', timeout=30):
+                                # NEW: Wait for ACK from client
+                                logging.info("[SERVER] Waiting for ACK")
+                                if protocol.wait_for_control_message(session, 'ACK', timeout=30):
+                                    logging.info("[SERVER] Received ACK")
                                     
-                                    # 3. Send DISCONNECT
-                                    logging.info("[CONTROL] Sending DISCONNECT to client")
-                                    protocol.send_control_message(session, 'DISCONNECT')
+                                    # 1. Send DONE
+                                    logging.info("[SERVER] Sending DONE to client")
+                                    protocol.send_control_message(session, 'DONE')
                                     
-                                    # 4. Wait for DISCONNECT_ACK (with timeout fallback)
-                                    logging.info("[CONTROL] Waiting for DISCONNECT_ACK")
-                                    if not protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=10):
-                                        logging.warning("[SERVER] No DISCONNECT_ACK, closing anyway")
-                                    
-                                    time.sleep(1)  # Brief wait before closing
+                                    # 2. Wait for DONE_ACK
+                                    logging.info("[SERVER] Waiting for DONE_ACK")
+                                    if protocol.wait_for_control_message(session, 'DONE_ACK', timeout=30):
+                                        
+                                        # 3. Send DISCONNECT
+                                        logging.info("[SERVER] Sending DISCONNECT to client")
+                                        protocol.send_control_message(session, 'DISCONNECT')
+                                        
+                                        # 4. Wait for DISCONNECT_ACK (with longer timeout)
+                                        logging.info("[SERVER] Waiting for DISCONNECT_ACK")
+                                        if not protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=20):
+                                            logging.warning("[SERVER] No DISCONNECT_ACK, closing anyway")
+                                        
+                                        time.sleep(1)  # Brief wait before closing
+                                    else:
+                                        logging.warning("[SERVER] No DONE_ACK, closing anyway")
                                 else:
-                                    logging.warning("[SERVER] No DONE_ACK, closing anyway")
+                                    logging.warning("[SERVER] No ACK received, closing anyway")
                                 
                                 # 5. Close and exit loop to go back to listening
                                 break

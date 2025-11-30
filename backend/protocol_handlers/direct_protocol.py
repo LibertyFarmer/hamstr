@@ -8,6 +8,7 @@ Uses DONE/DONE_ACK/DISCONNECT/DISCONNECT_ACK for clean shutdown.
 import json
 import logging
 import time
+import sys
 from typing import Optional, Dict, Any
 from .base_protocol import ProtocolHandler
 from socketio_logger import get_socketio_logger
@@ -25,10 +26,12 @@ class DirectProtocol(ProtocolHandler):
             success = self.backend_manager.send_data(session, control_data)
             if success:
                 logging.info(f"[DIRECT] Sent {msg_type}")
+                sys.stdout.flush()
                 socketio_logger.info(f"[CONTROL] Sent {msg_type}")
             return success
         except Exception as e:
             logging.error(f"[DIRECT] Error sending {msg_type}: {e}")
+            sys.stdout.flush()
             return False
     
     def wait_for_control_message(self, session, expected_type: str, timeout: int = 30) -> bool:
@@ -39,11 +42,13 @@ class DirectProtocol(ProtocolHandler):
                 msg = json.loads(response.decode('utf-8'))
                 if msg.get('type') == expected_type:
                     logging.info(f"[DIRECT] Received {expected_type}")
+                    sys.stdout.flush()
                     socketio_logger.info(f"[CONTROL] Received {expected_type}")
                     return True
             return False
         except Exception as e:
             logging.error(f"[DIRECT] Error waiting for {expected_type}: {e}")
+            sys.stdout.flush()
             return False
     
     def send_nostr_request(self, session, request_data: dict) -> bool:
@@ -58,6 +63,7 @@ class DirectProtocol(ProtocolHandler):
                 socketio_logger.info(f"[CONTROL] Sending {request_type} request via VARA")
             
             logging.info(f"[DIRECT] Sending: {request_type} ({len(json_data)} bytes)")
+            sys.stdout.flush()
             success = self.backend_manager.send_data(session, json_data)
             
             if success:
@@ -69,6 +75,7 @@ class DirectProtocol(ProtocolHandler):
             
         except Exception as e:
             logging.error(f"[DIRECT] Error sending: {e}")
+            sys.stdout.flush()
             socketio_logger.error(f"[CONTROL] Error: {e}")
             return False
     
@@ -76,6 +83,7 @@ class DirectProtocol(ProtocolHandler):
         """Receive NOSTR response directly as JSON."""
         try:
             logging.debug(f"[DIRECT] Waiting for response (timeout: {timeout}s)")
+            sys.stdout.flush()
             socketio_logger.info("[SYSTEM] Waiting for response via VARA...")
             
             response_data = self.backend_manager.receive_data(session, timeout)
@@ -83,6 +91,7 @@ class DirectProtocol(ProtocolHandler):
             if response_data:
                 response_dict = json.loads(response_data.decode('utf-8'))
                 logging.info(f"[DIRECT] Received response ({len(response_data)} bytes)")
+                sys.stdout.flush()
                 
                 if 'data' in response_dict:
                     socketio_logger.info(f"[PACKET] Response received from server")
@@ -93,10 +102,12 @@ class DirectProtocol(ProtocolHandler):
                 return response_dict
             else:
                 logging.debug("[DIRECT] No response received")
+                sys.stdout.flush()
                 socketio_logger.warning("[SYSTEM] No response received, timeout")
                 return None
                 
         except Exception as e:
             logging.error(f"[DIRECT] Error receiving response: {e}")
+            sys.stdout.flush()
             socketio_logger.error(f"[SYSTEM] Error receiving response: {e}")
             return None

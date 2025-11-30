@@ -121,10 +121,14 @@ class Client:
                             decompressed_response = decompress_nostr_data(response_data)
                             socketio_logger.info(f"[PACKET] Response received via VARA")
                             logging.info(f"Protocol response received: {len(decompressed_response)} chars")
-                           
-                            # VARA disconnect flow: wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
+
+                            # VARA disconnect flow: send ACK → wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
                             if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
                                 protocol = self.core.protocol_manager
+                                
+                                # NEW: Send ACK after receiving full response
+                                socketio_logger.info("[CONTROL] Sending ACK")
+                                protocol.send_control_message(self.session, 'ACK')
                                 
                                 # 1. Wait for DONE from server
                                 socketio_logger.info("[CONTROL] Waiting for DONE from server")
@@ -147,7 +151,7 @@ class Client:
                                 self.core.backend_manager.disconnect(self.session)
                                 self.session = None
                                 socketio_logger.info("[SESSION] Client disconnect complete")
-                            
+
                             return True, response_data
 
                         else:
