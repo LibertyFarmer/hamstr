@@ -15,7 +15,6 @@ import config
 import os
 
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Server:
@@ -543,6 +542,7 @@ class Server:
                             
                             logging.info(f"[SERVER] Processing: {request_string}")
                             
+                            
                             # Process and send response
                             response = self.process_request(request_string)
                             response_data = {'data': response}
@@ -550,7 +550,31 @@ class Server:
                             
                             if success:
                                 logging.info("[SERVER] DirectProtocol response sent")
-                                # Don't break - continue loop to wait for client disconnect
+                                protocol = self.core.protocol_manager
+                                
+                                # 1. Send DONE
+                                logging.info("[CONTROL] Sending DONE to client")
+                                protocol.send_control_message(session, 'DONE')
+                                
+                                # 2. Wait for DONE_ACK
+                                logging.info("[CONTROL] Waiting for DONE_ACK")
+                                if protocol.wait_for_control_message(session, 'DONE_ACK', timeout=30):
+                                    
+                                    # 3. Send DISCONNECT
+                                    logging.info("[CONTROL] Sending DISCONNECT to client")
+                                    protocol.send_control_message(session, 'DISCONNECT')
+                                    
+                                    # 4. Wait for DISCONNECT_ACK (with timeout fallback)
+                                    logging.info("[CONTROL] Waiting for DISCONNECT_ACK")
+                                    if not protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=10):
+                                        logging.warning("[SERVER] No DISCONNECT_ACK, closing anyway")
+                                    
+                                    time.sleep(1)  # Brief wait before closing
+                                else:
+                                    logging.warning("[SERVER] No DONE_ACK, closing anyway")
+                                
+                                # 5. Close and exit loop to go back to listening
+                                break
                             else:
                                 logging.error("[SERVER] Failed to send DirectProtocol response")
                                 break

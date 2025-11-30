@@ -122,20 +122,31 @@ class Client:
                             socketio_logger.info(f"[PACKET] Response received via VARA")
                             logging.info(f"Protocol response received: {len(decompressed_response)} chars")
                            
-                            # Disconnect VARA session before returning
+                            # VARA disconnect flow: wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
                             if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                                socketio_logger.info("[SESSION] Client initiating disconnect")
-                                time.sleep(2)  # Wait for server to finish sending
-                                # Send disconnect message before closing
-                                try:
-                                    disconnect_msg = json.dumps({'type': 'DISCONNECT'}).encode('utf-8')
-                                    self.core.backend_manager.send_data(self.session, disconnect_msg)
-                                    print("DEBUG: Sent DISCONNECT from client.py")
-                                    time.sleep(1)  # Give server time to receive
-                                except Exception as e:
-                                    print(f"DEBUG: Failed to send disconnect: {e}")
+                                protocol = self.core.protocol_manager
+                                
+                                # 1. Wait for DONE from server
+                                socketio_logger.info("[CONTROL] Waiting for DONE from server")
+                                if protocol.wait_for_control_message(self.session, 'DONE', timeout=30):
+                                    
+                                    # 2. Send DONE_ACK
+                                    socketio_logger.info("[CONTROL] Sending DONE_ACK")
+                                    protocol.send_control_message(self.session, 'DONE_ACK')
+                                    
+                                    # 3. Wait for DISCONNECT from server
+                                    socketio_logger.info("[CONTROL] Waiting for DISCONNECT from server")
+                                    if protocol.wait_for_control_message(self.session, 'DISCONNECT', timeout=30):
+                                        
+                                        # 4. Send DISCONNECT_ACK
+                                        socketio_logger.info("[CONTROL] Sending DISCONNECT_ACK")
+                                        protocol.send_control_message(self.session, 'DISCONNECT_ACK')
+                                        time.sleep(2)  # Give server time to receive
+                                
+                                # 5. Close connection
                                 self.core.backend_manager.disconnect(self.session)
                                 self.session = None
+                                socketio_logger.info("[SESSION] Client disconnect complete")
                             
                             return True, response_data
 

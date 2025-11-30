@@ -51,6 +51,18 @@ class ProtocolManager:
         
         protocol_name = handler_class.__name__
         logging.info(f"[PROTOCOL_MGR] Using {protocol_name} for {backend_type.value}")
+
+    def send_control_message(self, session, msg_type: str) -> bool:
+        """Forward control message to underlying protocol handler."""
+        if hasattr(self._current_handler, 'send_control_message'):
+            return self._current_handler.send_control_message(session, msg_type)
+        return False
+
+    def wait_for_control_message(self, session, expected_type: str, timeout: int = 30) -> bool:
+        """Forward control message wait to underlying protocol handler."""
+        if hasattr(self._current_handler, 'wait_for_control_message'):
+            return self._current_handler.wait_for_control_message(session, expected_type, timeout)
+        return False
     
     def get_protocol_type(self) -> str:
         """Get current protocol type name."""
