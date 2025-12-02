@@ -433,7 +433,6 @@ class VARABackend(NetworkBackend):
             session.data_socket.sendall(kiss_frame)
             session.update_activity()
             
-            socketio_logger.info(f"[CONTROL] Data sent successfully")
             logging.debug(f"[VARA_BACKEND] Sent {len(data)} bytes via VARA/KISS")
             return True
             

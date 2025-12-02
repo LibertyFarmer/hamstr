@@ -31,31 +31,21 @@ function scrollToTop() {
 }
 
 $: logs = $currentOperationLogs || [];
+
+// Packet-based progress (for packet protocol)
 $: packetInfo = logs.reduce((latest, log) => {
-    // For requests
     const responseMatch = log.message.match(/Type=RESPONSE, Seq=(\d+)\/(\d+)/);
-    // For note ACK confirmations  
     const ackMatch = log.message.match(/Type=ACK, Content=ACK\|(\d+)/);
-    // For getting total packet count from sending message
     const noteMatch = log.message.match(/Type=NOTE, Seq=\d+\/(\d+)/);
-    
-    // NEW: Handle ZAP packet types
     const zapMatch = log.message.match(/Type=ZAP_KIND9734_REQUEST, Seq=\d+\/(\d+)/);
     const nwcMatch = log.message.match(/Type=NWC_PAYMENT_REQUEST, Seq=\d+\/(\d+)/);
-    
-    // NEW: Handle zap ACK confirmations (from translated messages)
     const zapAckMatch = log.message.match(/Zap Packet (\d+) confirmed/);
     const nwcAckMatch = log.message.match(/Payment Command Packet (\d+) confirmed/);
 
-    if (noteMatch) {
-        return { ...latest, total: parseInt(noteMatch[1]) };
-    }
-    if (zapMatch) {
-        return { ...latest, total: parseInt(zapMatch[1]) };
-    }
-    if (nwcMatch) {
-        return { ...latest, total: parseInt(nwcMatch[1]) };
-    }
+    if (noteMatch) return { ...latest, total: parseInt(noteMatch[1]) };
+    if (zapMatch) return { ...latest, total: parseInt(zapMatch[1]) };
+    if (nwcMatch) return { ...latest, total: parseInt(nwcMatch[1]) };
+    
     if (ackMatch) {
         const current = parseInt(ackMatch[1]);
         return {
@@ -87,14 +77,44 @@ $: packetInfo = logs.reduce((latest, log) => {
     return latest;
 }, { current: 0, total: 0, percent: 0 });
 
-$: progress = packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0;
+// VARA state-based progress (check RAW messages, keep maximum)
+$: varaProgress = logs.reduce((currentProgress, log) => {
+  const msg = log.message;
+  let newProgress = currentProgress;
+  
+  if (msg.includes('Connecting to') && msg.includes('VARA')) newProgress = Math.max(newProgress, 5);
+  if (msg.includes('CONNECTED via VARA')) newProgress = Math.max(newProgress, 10);
+  if (msg.includes('[CLIENT] Using protocol layer')) newProgress = Math.max(newProgress, 15);
+  if (msg.includes('[CONTROL] Sending via VARA')) newProgress = Math.max(newProgress, 25);
+  if (msg.includes('[CONTROL] Transmission complete') || msg.includes('[CONTROL] Data sent successfully')) newProgress = Math.max(newProgress, 35);
+  if (msg.includes('[SYSTEM] Waiting for response via VARA')) newProgress = Math.max(newProgress, 45);
+  if (msg.includes('[PACKET] Receiving data via VARA')) newProgress = Math.max(newProgress, 60);
+  if (msg.includes('[PACKET] Received complete message')) newProgress = Math.max(newProgress, 75);
+  if (msg.includes('[CONTROL] Received DONE')) newProgress = Math.max(newProgress, 85);
+  if (msg.includes('[CONTROL] Sent DONE_ACK')) newProgress = Math.max(newProgress, 95);
+  if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
+  
+  return newProgress;
+}, 0);
+
+// Detect if using VARA or packet protocol
+$: isVARA = logs.some(log => log.message.includes('VARA'));
+
+// Use appropriate progress based on protocol
+$: progress = isVARA ? varaProgress : (packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0);
 
 $: connectionStatus = logs.reduce((status, log) => {
  const msg = log.message;
+ // VARA connections
+ if (msg.includes('[SESSION] CONNECTED via VARA')) return 'CONNECTED';
+ // Packet protocol connections
  if (msg.includes('[SESSION] CONNECTED to')) return 'CONNECTED';
  if (msg.includes('Sending CONNECTION REQUEST')) return 'CONNECTING';
+ if (msg.includes('Connecting to') && msg.includes('VARA')) return 'CONNECTING';
  if (msg.includes('[SESSION] Client initiating disconnect')) return 'DISCONNECTING';
- if (msg.includes('Client disconnect complete')) return 'DISCONNECTED';
+ if (msg.includes('[SESSION] Client disconnect complete')) return 'DISCONNECTED';
+ // VARA disconnecting
+ if (msg.includes('[SESSION] Disconnecting session:')) return 'DISCONNECTING';
  return status;
 }, 'DISCONNECTED');
 
@@ -171,7 +191,11 @@ onMount(() => {
           color={progress === 100 ? "green" : "blue"}
         />
         <div class="text-xs text-gray-500 mt-1">
-          {packetInfo.current} of {packetInfo.total} packets
+          {#if isVARA}
+            {progress < 100 ? 'Operation in progress...' : 'Complete'}
+          {:else}
+            {packetInfo.current} of {packetInfo.total} packets
+          {/if}
         </div>
       </div>
 

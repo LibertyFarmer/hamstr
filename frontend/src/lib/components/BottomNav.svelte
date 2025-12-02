@@ -102,12 +102,16 @@ window.bottomNavComponent = {
     }
   }
 
-  function handleRequestTypeSelected(event) {
-    const { type } = event.detail;
-    dispatch('clearLogs');
-    progressDrawerOpen = true;
+function handleRequestTypeSelected(event) {
+  const { type } = event.detail;
+  dispatch('clearLogs');
+  progressDrawerOpen = true;
+  
+  // Wait for drawer to open and logs to clear before starting connection
+  setTimeout(() => {
     handleRequestNotes(type);
-  }
+  }, 200);
+}
 
   function goHome() {
     goto('/');

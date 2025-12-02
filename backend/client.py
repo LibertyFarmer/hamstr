@@ -40,6 +40,13 @@ class Client:
             additional_params: Optional string of additional parameters
         """
         if not self.session or self.session.state == ModemState.DISCONNECTED:
+            # Protocol-specific connecting message
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend_type = self.core.backend_manager.get_backend_type()
+                if backend_type.value == 'vara':
+                    socketio_logger.info(f"[SYSTEM] Connecting to {server_callsign[0]}-{server_callsign[1]} via VARA...")
+            # else: packet protocol already has its own connecting message in connection_manager.py
+            
             self.session = self.core.connect(server_callsign)
             if not self.session:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
@@ -83,7 +90,6 @@ class Client:
                     request_data['params'] = additional_params
                 
                 # Send via protocol layer
-                socketio_logger.info(f"[CONTROL] Sending {request_type.value} request via VARA")
                 success = self.core.protocol_manager.send_nostr_request(self.session, request_data)
                 
                 if success:
