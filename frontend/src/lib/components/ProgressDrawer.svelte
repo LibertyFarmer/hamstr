@@ -106,11 +106,12 @@ $: progress = isVARA ? varaProgress : (packetInfo.total > 0 ? (packetInfo.curren
 $: connectionStatus = logs.reduce((status, log) => {
  const msg = log.message;
  // VARA connections
+ if (msg.includes('[PACKET] CONNECTING to') && msg.includes('VARA')) return 'CONNECTING';
  if (msg.includes('[SESSION] CONNECTED via VARA')) return 'CONNECTED';
+ if (msg.includes('[CONTROL] Waiting for DISCONNECT from server')) return 'DISCONNECTING';
  // Packet protocol connections
  if (msg.includes('[SESSION] CONNECTED to')) return 'CONNECTED';
  if (msg.includes('Sending CONNECTION REQUEST')) return 'CONNECTING';
- if (msg.includes('Connecting to') && msg.includes('VARA')) return 'CONNECTING';
  if (msg.includes('[SESSION] Client initiating disconnect')) return 'DISCONNECTING';
  if (msg.includes('[SESSION] Client disconnect complete')) return 'DISCONNECTED';
  // VARA disconnecting

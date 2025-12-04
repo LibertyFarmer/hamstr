@@ -44,7 +44,7 @@ class Client:
             if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
                 backend_type = self.core.backend_manager.get_backend_type()
                 if backend_type.value == 'vara':
-                    socketio_logger.info(f"[SYSTEM] Connecting to {server_callsign[0]}-{server_callsign[1]} via VARA...")
+                    socketio_logger.info(f"[PACKET] CONNECTING to {server_callsign[0]}-{server_callsign[1]} via VARA...")
             # else: packet protocol already has its own connecting message in connection_manager.py
             
             self.session = self.core.connect(server_callsign)

@@ -1,4 +1,12 @@
 const logTranslations = {
+  // Connection related - VARA Protocol (NEW - at the top for priority)
+  '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?) via VARA...': (match) => {
+    return `Attempting to connect to ${match[1]}...`;
+  },
+  '\\[SESSION\\] CONNECTED via VARA to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
+    return `Connected via VARA to ${match[1]}`;
+  },
+  
   // Connection related - Packet Protocol
   '\\[SYSTEM\\] Sending Connection Request': 'Connecting...',
   '\\[CLIENT\\] Failed to connect to server.*': 'Connection to server failed',
@@ -6,20 +14,12 @@ const logTranslations = {
   '\\[SESSION\\] Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...': 'Sending Connection Request...',
   '\\[CONTROL\\] Received control: Type=CONNECT_ACK, Content=Connection Accepted': 'Connection confirmed',
   '\\[CONTROL\\] Sending packet: Type=CONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Establishing connection...',
-  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+-\\d+)': (match) => {
+  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
     return `Connected with server`;
   },
   
-  // VARA Connection - SIMPLIFIED
-  '\\[SYSTEM\\] Connecting to ([A-Z0-9]+-\\d+) via VARA...': (match) => {
-    return `Connecting to ${match[1]} via VARA...`;
-  },
-  '\\[SESSION\\] CONNECTED via VARA to ([A-Z0-9]+-\\d+)': (match) => {
-    return `Connected via VARA to ${match[1]}`;
-  },
-  
   // VARA Data Transfer - SIMPLIFIED (NO BYTES)
-  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Sending data to server...',
+  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Requesting Data from Server...',
   '\\[CONTROL\\] Transmission in progress...': 'Transmission in progress...',
   '\\[CONTROL\\] Transmission complete': 'Data sent successfully',
   '\\[CONTROL\\] Data sent successfully': 'Data sent successfully',
@@ -41,8 +41,14 @@ const logTranslations = {
   '\\[CONTROL\\] Sending DISCONNECT_ACK': 'Confirming disconnect...',
   '\\[CONTROL\\] Sent DISCONNECT_ACK': 'Disconnect confirmed',
   
-  // VARA Request Types
-  '\\[CONTROL\\] Sending 1 request via VARA': 'Sending request via VARA...',
+  // VARA Specific Request Types
+  
+  '\\[CONTROL\\] Sending 1 request via VARA': 'Fetching notes from followed accounts...',
+  '\\[CONTROL\\] Sending 2 request via VARA': 'Fetching your notes...',
+  '\\[CONTROL\\] Sending 3 request via VARA': 'Fetching global notes...',
+  '\\[CONTROL\\] Sending 4 request via VARA': 'Searching NOSTR for text...',
+  '\\[CONTROL\\] Sending 5 request via VARA': 'Searching NOSTR for hashtags...',
+  '\\[CONTROL\\] Sending 6 request via VARA': 'Fetching user notes...',
   '\\[CLIENT\\] Using protocol layer for request': 'Preparing VARA transmission...',
   
   // VARA Session
@@ -51,6 +57,8 @@ const logTranslations = {
   
   // VARA Progress
   '\\[PROGRESS\\] 100\\.00% complete': 'Transfer complete!',
+  
+  // Debug messages
   '\\[DEBUG\\] Parsed response data: True': 'Data parsed successfully',
   '\\[DEBUG\\] About to process received notes': 'Processing received notes...',
   '\\[DEBUG\\] Finished processing notes': 'Notes processed successfully',
@@ -101,6 +109,9 @@ const logTranslations = {
   '\\[CONTROL\\] Sending packet: Type=ZAP_KIND9734_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
     return `Sending Zap Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
   },
+  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
+    return `Zap Packet ${match[1]} confirmed`;
+  },
 
   // Zap Flow - Invoice Generation
   '\\[CLIENT\\] READY sent, waiting for invoice response': 'Generating Lightning invoice...',
@@ -113,7 +124,7 @@ const logTranslations = {
     return `Sending payment command...`;
   },
   '\\[CONTROL\\] Sending packet: Type=NWC_PAYMENT_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
-    return `Sent Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
+    return `Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
   },
 
   // Zap Flow - Invoice Response
@@ -200,9 +211,6 @@ const logTranslations = {
   },
   '\\[CONTROL\\] Sending packet: Type=NOTE, Seq=(\\d+)/(\\d+)': (match) => {
     return `Sending Packet ${match[1].padStart(4, '0')} of ${match[2].padStart(4, '0')}`;
-  },
-  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
-    return `Packet ${match[1].padStart(4, '0')} confirmed`;
   },
   '\\[PACKET\\] Received Message: Type=RESPONSE, Seq=(\\d{4})/(\\d{4})': (match) => {
     const [current, total] = [parseInt(match[1]), parseInt(match[2])];
