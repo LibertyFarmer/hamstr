@@ -93,6 +93,11 @@ $: varaProgress = logs.reduce((currentProgress, log) => {
   if (msg.includes('[CONTROL] Received DONE')) newProgress = Math.max(newProgress, 85);
   if (msg.includes('[CONTROL] Sent DONE_ACK')) newProgress = Math.max(newProgress, 95);
   if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
+  if (msg.includes('[CONTROL] Message received via VARA')) newProgress = Math.max(newProgress, 60);  // Server response received
+  if (msg.includes('[CLIENT] Note Published!')) newProgress = Math.max(newProgress, 75);  // Note confirmed published
+  if (msg.includes('[CONTROL] Sent DONE')) newProgress = Math.max(newProgress, 95);
+  if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
+  
   
   return newProgress;
 }, 0);

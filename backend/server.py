@@ -527,6 +527,51 @@ class Server:
                                 logging.info("[SERVER] Received DISCONNECT from client")
                                 break
                             
+                            # Handle control messages (DONE, ACK, etc.)  <-- ADD THIS BLOCK HERE
+                            if request_data.get('type') == 'DONE':
+                                logging.info("[SERVER] Received DONE from client")
+                                protocol = self.core.protocol_manager
+                                protocol.send_control_message(session, 'DONE_ACK')
+                                
+                                # Wait for DISCONNECT from client
+                                logging.info("[SERVER] Waiting for DISCONNECT")
+                                disconnect_data = protocol.receive_nostr_response(session, timeout=20)
+                                if disconnect_data and disconnect_data.get('type') == 'DISCONNECT':
+                                    logging.info("[SERVER] Received DISCONNECT from client")
+                                    protocol.send_control_message(session, 'DISCONNECT_ACK')
+                                    logging.info("[SERVER] DISCONNECT_ACK sent (client will receive when ready)")
+                                    logging.info("[SERVER] Clean disconnect completed")
+                                else:
+                                    logging.warning("[SERVER] Did not receive DISCONNECT")
+
+                                break  # Exit the while loop - we're done
+                            if request_data.get('type') == 'DONE_ACK':
+                                logging.info("[SERVER] Received DONE_ACK from client")
+                                continue
+                            
+                            if request_data.get('type') == 'ACK':
+                                logging.info("[SERVER] Received ACK from client")
+                                continue
+                            
+                            # Handle NOTE sending
+                            if request_data.get('type') == 'NOTE':
+                                logging.info("[SERVER] Received NOTE via DirectProtocol")
+                                note_content = request_data.get('content')
+                                
+                                if note_content:
+                                    self.process_note(note_content)
+                                    response_data = {'success': True, 'message': 'Note published'}
+                                    success = self.core.protocol_manager.send_nostr_request(session, response_data)
+                                    
+                                    if success:
+                                        logging.info("[SERVER] Note published, confirmation sent")
+                                    else:
+                                        logging.error("[SERVER] Failed to send note confirmation")
+                                else:
+                                    logging.error("[SERVER] NOTE request missing content")
+                                
+                                continue  # Skip GET_NOTES processing
+                            
                             logging.info(f"[SERVER] Received DirectProtocol request: {request_data.get('type')}")
                             
                             # Convert to format process_request expects

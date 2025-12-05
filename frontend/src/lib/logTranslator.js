@@ -19,7 +19,7 @@ const logTranslations = {
   },
   
   // VARA Data Transfer - SIMPLIFIED (NO BYTES)
-  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Requesting Data from Server...',
+  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Communicating with HAMSTR via VARA...',
   '\\[CONTROL\\] Transmission in progress...': 'Transmission in progress...',
   '\\[CONTROL\\] Transmission complete': 'Data sent successfully',
   '\\[CONTROL\\] Data sent successfully': 'Data sent successfully',
@@ -28,6 +28,7 @@ const logTranslations = {
   '\\[PACKET\\] Received complete message \\(\\d+ bytes\\)': 'Data received from server',
   '\\[PACKET\\] Response received from server': 'Response received successfully',
   '\\[PACKET\\] Response received via VARA': 'Server response complete',
+  
   
   // VARA Control Messages
   '\\[CONTROL\\] Sending ACK': 'Acknowledging receipt...',
@@ -40,6 +41,17 @@ const logTranslations = {
   '\\[CONTROL\\] Received DISCONNECT': 'Server requesting disconnect',
   '\\[CONTROL\\] Sending DISCONNECT_ACK': 'Confirming disconnect...',
   '\\[CONTROL\\] Sent DISCONNECT_ACK': 'Disconnect confirmed',
+  '\\[CONTROL\\] Message received via VARA': 'Server response received',
+  '\\[CONTROL\\] Sent DONE': 'Finalizing transmission...',
+  '\\[CONTROL\\] Sending DISCONNECT': 'Initiating disconnect...',
+  '\\[CONTROL\\] Sent DISCONNECT': 'Disconnect signal sent',
+  '\\[CONTROL\\] No DONE_ACK received': 'Waiting for server acknowledgment...',
+  '\\[CONTROL\\] No DISCONNECT_ACK received': 'Disconnect completed',
+  '\\[CONTROL\\] Received DONE_ACK': 'Server acknowledged',
+  '\\[CONTROL\\] Received DISCONNECT_ACK': 'Disconnect confirmed',
+  '\\[CONTROL\\] Sending DONE': 'Finalizing transmission...',
+'\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
+'\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
   
   // VARA Specific Request Types
   
@@ -50,10 +62,13 @@ const logTranslations = {
   '\\[CONTROL\\] Sending 5 request via VARA': 'Searching NOSTR for hashtags...',
   '\\[CONTROL\\] Sending 6 request via VARA': 'Fetching user notes...',
   '\\[CLIENT\\] Using protocol layer for request': 'Preparing VARA transmission...',
+  '\\[CONTROL\\] Sending NOTE request via VARA': 'Sending note to server...',
+  '\\[CLIENT\\] Using protocol layer for note': 'Transmitting note via VARA...',
   
   // VARA Session
   '\\[SESSION\\] Client disconnect complete': 'Disconnected from server',
   '\\[SESSION\\] Disconnecting session: [\\w-]+': 'Closing VARA session...',
+  '\\[SESSION\\] VARA disconnect': 'Disconnecting from server',
   
   // VARA Progress
   '\\[PROGRESS\\] 100\\.00% complete': 'Transfer complete!',

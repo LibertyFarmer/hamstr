@@ -254,44 +254,91 @@ class Client:
         
     def connect_and_send_note(self, server_callsign, note):
         if not self.session or self.session.state == ModemState.DISCONNECTED:
+            # Protocol-specific connecting message
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend_type = self.core.backend_manager.get_backend_type()
+                if backend_type.value == 'vara':
+                    socketio_logger.info(f"[PACKET] CONNECTING to {server_callsign[0]}-{server_callsign[1]} via VARA...")
+            
             self.session = self.core.connect(server_callsign)
             if not self.session:
-                socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign[0]}-{server_callsign[1]}")
+                socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False
-
-        self.session.is_note_writing = True
+            
+            # Log connection
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend_type = self.core.backend_manager.get_backend_type()
+                if backend_type.value == 'vara':
+                    socketio_logger.info(f"[SESSION] CONNECTED via VARA to {server_callsign[0]}-{server_callsign[1]}")
+        
         try:
             socketio_logger.info("[CLIENT] Sending note")
             logging.info("Sending note")
-            if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
-                socketio_logger.error("Failed to establish READY state")
-                logging.error("Failed to establish READY state")
-                return False
-
-            if not self.core.send_note(self.session, note):
-                socketio_logger.error("[SYSTEM] Failed to send note")
-                logging.error("Failed to send note")
-                return False
-
-            logging.info("Waiting for DONE_ACK")
-            response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
-            if response:
-                socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
-                logging.info("Received DONE_ACK, note transmission complete")
-                return True
+            
+            # Route through protocol layer if available
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                socketio_logger.info("[CLIENT] Using protocol layer for note")
+                
+                note_data = {'type': 'NOTE', 'content': note}
+                success = self.core.protocol_manager.send_nostr_request(self.session, note_data)
+                
+                if success:
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
+                    if response and response.get('success'):
+                        socketio_logger.info("[CLIENT] Note Published!")
+                        
+                        protocol = self.core.protocol_manager
+                        
+                        # Send DONE
+                        socketio_logger.info("[CONTROL] Sending DONE")
+                        protocol.send_control_message(self.session, 'DONE')
+                        
+                        # Wait for DONE_ACK
+                        socketio_logger.info("[CONTROL] Waiting for DONE_ACK")
+                        done_ack = protocol.receive_nostr_response(self.session, timeout=15)
+                        if done_ack and done_ack.get('type') == 'DONE_ACK':
+                            socketio_logger.info("[CONTROL] Received DONE_ACK")
+                        else:
+                            socketio_logger.warning("[CONTROL] No DONE_ACK received")
+                        
+                        time.sleep(1)  # Brief pause
+                        
+                        # Send DISCONNECT (don't wait for ACK - connection will close)
+                        socketio_logger.info("[CONTROL] Sending DISCONNECT")
+                        protocol.send_control_message(self.session, 'DISCONNECT')
+                        socketio_logger.info("[CONTROL] Disconnect signal sent")
+                        
+                        time.sleep(2)  # Give it time to transmit
+                        return True
+                    else:
+                        socketio_logger.error("[CLIENT] Failed to publish note")
+                        return False
+                else:
+                    return False
+            
             else:
-                socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
-                logging.error("Failed to receive DONE_ACK")
-                return False
-
+                # FALLBACK: Old packet system (before protocol manager was added)
+                if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
+                    socketio_logger.error("Failed to establish READY state")
+                    return False
+                if not self.core.send_note(self.session, note):
+                    socketio_logger.error("[SYSTEM] Failed to send note")
+                    return False
+                response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
+                if response:
+                    socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
+                    return True
+                else:
+                    socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
+                    return False
+        
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] An error occurred during note sending: {e}")
             logging.error(f"An error occurred during note sending: {e}")
             return False
         finally:
-            self.session.is_note_writing = False
-            if self.session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
+            if self.session and self.session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
                 self.disconnect()
 
     def handle_missing_packets(self, session, missing_packets_message):
