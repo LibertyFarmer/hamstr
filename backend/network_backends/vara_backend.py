@@ -265,6 +265,15 @@ class VARABackend(NetworkBackend):
         Returns:
             VARASession if successful, None if failed
         """
+        # Check if VARA is ready for server
+        if self.is_server and (not self._vara_ready or not self._listening_command_socket):
+            logging.warning("[VARA_BACKEND] VARA not ready - attempting to initialize")
+            self._initialize_vara()
+            if not self._vara_ready or not self._listening_command_socket:
+                logging.error("[VARA_BACKEND] VARA initialization failed - cannot accept connections")
+                self._update_status(BackendStatus.ERROR)
+                return None
+        
         self._update_status(BackendStatus.CONNECTING)
         
         # Parse callsigns
@@ -286,7 +295,7 @@ class VARABackend(NetworkBackend):
                 command_sock = self._listening_command_socket
                 logging.info(f"[VARA_BACKEND] Server waiting for incoming connection...")
                 
-                # Wait for client connection on existing listening socket (no timeout - wait forever)
+                # Wait for client connection on existing listening socket
                 connected = False
                 while not connected:
                     try:
@@ -302,6 +311,11 @@ class VARABackend(NetworkBackend):
                                     break
                     except socket.timeout:
                         continue
+                    except OSError:
+                        # Socket closed during shutdown - this is normal
+                        logging.info("[VARA_BACKEND] Connection wait aborted (shutdown)")
+                        self._update_status(BackendStatus.DISCONNECTED)
+                        return None
                 
                 if not connected:
                     raise Exception("Timeout waiting for client connection")
@@ -772,6 +786,45 @@ class VARABackend(NetworkBackend):
         except Exception as e:
             logging.error(f"[VARA_BACKEND] Disconnect error: {e}")
             return False
+        
+    def cleanup(self):
+       
+        try:
+            logging.info("[VARA_BACKEND] Cleanup started")
+            
+            # Disconnect all active sessions first
+            for session_key in list(self._active_sessions.keys()):
+                session = self._active_sessions[session_key]
+                try:
+                    self.disconnect(session)
+                except Exception as e:
+                    logging.error(f"[VARA_BACKEND] Error disconnecting session {session_key}: {e}")
+            
+            # Server only: Stop VARA listening and close command socket
+            if self.is_server and self._listening_command_socket:
+                try:
+                    # Send LISTEN OFF to VARA
+                    logging.info("[VARA_BACKEND] Sending LISTEN OFF to VARA")
+                    self._send_vara_command(self._listening_command_socket, "LISTEN OFF")
+                    time.sleep(0.5)  # Give VARA time to process
+                    
+                    # Close the listening command socket
+                    self._listening_command_socket.close()
+                    logging.info("[VARA_BACKEND] Listening command socket closed")
+                except Exception as e:
+                    logging.error(f"[VARA_BACKEND] Error during VARA shutdown: {e}")
+                finally:
+                    self._listening_command_socket = None
+                    self._vara_ready = False
+            
+            # Clear session tracking
+            self._active_sessions.clear()
+            self._update_status(BackendStatus.DISCONNECTED)
+            
+            logging.info("[VARA_BACKEND] Cleanup completed")
+            
+        except Exception as e:
+            logging.error(f"[VARA_BACKEND] Cleanup error: {e}")
     
     def is_connected(self, session: VARASession) -> bool:
         """

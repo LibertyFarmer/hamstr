@@ -40,12 +40,7 @@ class Client:
             additional_params: Optional string of additional parameters
         """
         if not self.session or self.session.state == ModemState.DISCONNECTED:
-            # Protocol-specific connecting message
-            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                backend_type = self.core.backend_manager.get_backend_type()
-                if backend_type.value == 'vara':
-                    socketio_logger.info(f"[PACKET] CONNECTING to {server_callsign[0]}-{server_callsign[1]} via VARA...")
-            # else: packet protocol already has its own connecting message in connection_manager.py
+            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
             
             self.session = self.core.connect(server_callsign)
             if not self.session:
@@ -53,16 +48,13 @@ class Client:
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-             # Log connection based on backend type
-            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                backend_type = self.core.backend_manager.get_backend_type()
-                if backend_type.value == 'vara':
-                    socketio_logger.info(f"[SESSION] CONNECTED via VARA to {server_callsign[0]}-{server_callsign[1]}")
-                else:
-                    socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
+            # Log connection
+            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
             
-            # Add a moderate stabilization delay after connection established
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
+            # Add stabilization delay only for PacketProtocol (DirectProtocol doesn't need it)
+            if not hasattr(self.core, 'protocol_manager') or \
+            self.core.protocol_manager.get_protocol_type() == 'PacketProtocol':
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC
@@ -101,7 +93,7 @@ class Client:
                     if response:
                         # Handle response based on protocol type
                         if self.core.protocol_manager.get_protocol_type() == 'DirectProtocol':
-                            # Direct response from VARA/reliable transport
+                            # Direct protocol response
                             response_data = response.get('data', '')
                         else:
                             # Packet protocol response
@@ -125,10 +117,10 @@ class Client:
                             
                             # Decompress and return response
                             decompressed_response = decompress_nostr_data(response_data)
-                            socketio_logger.info(f"[PACKET] Response received via VARA")
+                            socketio_logger.info(f"[PACKET] Response received from server")
                             logging.info(f"Protocol response received: {len(decompressed_response)} chars")
 
-                            # VARA disconnect flow: send ACK → wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
+                            # Direct disconnect flow: send ACK → wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
                             if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
                                 protocol = self.core.protocol_manager
                                 
@@ -254,11 +246,7 @@ class Client:
         
     def connect_and_send_note(self, server_callsign, note):
         if not self.session or self.session.state == ModemState.DISCONNECTED:
-            # Protocol-specific connecting message
-            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                backend_type = self.core.backend_manager.get_backend_type()
-                if backend_type.value == 'vara':
-                    socketio_logger.info(f"[PACKET] CONNECTING to {server_callsign[0]}-{server_callsign[1]} via VARA...")
+            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
             
             self.session = self.core.connect(server_callsign)
             if not self.session:
@@ -267,10 +255,7 @@ class Client:
                 return False
             
             # Log connection
-            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                backend_type = self.core.backend_manager.get_backend_type()
-                if backend_type.value == 'vara':
-                    socketio_logger.info(f"[SESSION] CONNECTED via VARA to {server_callsign[0]}-{server_callsign[1]}")
+            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
         
         try:
             socketio_logger.info("[CLIENT] Sending note")
@@ -381,11 +366,9 @@ class Client:
         socketio_logger.info("[SESSION] Client initiating disconnect [CLIENT_DISCONNECT]")
         logging.info("Client initiating disconnect [CLIENT_DISCONNECT]")
         if self.session and self.session.state != ModemState.DISCONNECTED:
-            # Check if using VARA backend - use direct disconnect
-            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
-                backend_type = self.core.backend_manager.get_backend_type()
-                if backend_type.value == 'vara':
-                    socketio_logger.info("[SESSION] VARA disconnect")
+            # Check if using DirectProtocol - use direct disconnect
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                if self.core.protocol_manager.get_protocol_type() == 'DirectProtocol':
                     self.core.backend_manager.disconnect(self.session)
                     self.session = None
                     socketio_logger.info("[SYSTEM] Client disconnect complete [CLIENT_DISCONNECT_COMPLETE]")

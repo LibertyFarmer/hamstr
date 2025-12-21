@@ -419,13 +419,18 @@ class ServerThread(QThread):
                                         logging.info("Session ended, resetting for next connection")
                                         self.server.core.reset_for_next_connection()
                                 else:
-                                    logging.info("Connection attempt failed or timed out, resetting for next connection")
-                                    self.server.core.reset_for_next_connection()
+                                    # Only log as failure if server is still running (not shutting down)
+                                    if self.running and self.server.running:
+                                        logging.info("Connection attempt failed or timed out, resetting for next connection")
+                                        self.server.core.reset_for_next_connection()
+                                    # If not running, shutdown is in progress - exit gracefully
                                 
                                 self.server.cleanup_inactive_sessions()
                             except Exception as e:
                                 logging.error(f"Error in connection handling: {e}")
-                                self.server.core.reset_for_next_connection()
+                                # Only reset if still running
+                                if self.running and self.server.running:
+                                    self.server.core.reset_for_next_connection()
                                 
                             time.sleep(0.1)
                             
@@ -433,7 +438,7 @@ class ServerThread(QThread):
                         logging.error(f"Server error: {e}")
                     finally:
                         logging.info("Server stopped.")
-                        
+                
                 def stop(self):
                     self.running = False
                     if self.server:

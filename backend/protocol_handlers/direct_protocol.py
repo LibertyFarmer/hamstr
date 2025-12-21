@@ -25,6 +25,8 @@ class DirectProtocol(ProtocolHandler):
             control_data = json.dumps({'type': msg_type}).encode('utf-8')
             success = self.backend_manager.send_data(session, control_data)
             if success:
+                # Wait for backend to finish transmitting
+                self.wait_for_transmission_complete(session, timeout=30)
                 logging.info(f"[DIRECT] Sent {msg_type}")
                 sys.stdout.flush()
                 socketio_logger.info(f"[CONTROL] Sent {msg_type}")
@@ -50,6 +52,8 @@ class DirectProtocol(ProtocolHandler):
             logging.error(f"[DIRECT] Error waiting for {expected_type}: {e}")
             sys.stdout.flush()
             return False
+        
+    
     
     def send_nostr_request(self, session, request_data: dict) -> bool:
         """Send NOSTR request directly as JSON."""
@@ -58,15 +62,17 @@ class DirectProtocol(ProtocolHandler):
             request_type = request_data.get('type', 'UNKNOWN')
             
             if 'data' in request_data:
-                socketio_logger.info(f"[CONTROL] Sending response via VARA")
+                socketio_logger.info(f"[CONTROL] Sending response")
             else:
-                socketio_logger.info(f"[CONTROL] Sending {request_type} request via VARA")
+                socketio_logger.info(f"[CONTROL] Sending {request_type} request")
             
             logging.info(f"[DIRECT] Sending: {request_type} ({len(json_data)} bytes)")
             sys.stdout.flush()
             success = self.backend_manager.send_data(session, json_data)
             
             if success:
+                # Wait for backend to finish transmitting
+                self.wait_for_transmission_complete(session, timeout=60)
                 socketio_logger.info(f"[CONTROL] Transmission complete")
             else:
                 socketio_logger.error(f"[CONTROL] Transmission failed")
@@ -78,7 +84,24 @@ class DirectProtocol(ProtocolHandler):
             sys.stdout.flush()
             socketio_logger.error(f"[CONTROL] Error: {e}")
             return False
-    
+        
+    def wait_for_transmission_complete(self, session, timeout: int = 30) -> bool:
+        """Wait for backend to finish transmitting data (for reliable transports)."""
+        try:
+            # Let the backend handle transmission completion
+            if hasattr(self.backend_manager, '_backend'):
+                backend = self.backend_manager._backend
+                if hasattr(backend, '_wait_for_vara_tx_complete'):
+                    return backend._wait_for_vara_tx_complete(timeout)
+            
+            # Fallback for backends without transmission complete checking
+            logging.debug("[DIRECT] Backend doesn't support transmission complete check")
+            return True
+            
+        except Exception as e:
+            logging.error(f"[DIRECT] Error waiting for transmission: {e}")
+            return False
+        
     def receive_nostr_response(self, session, timeout: int = 30) -> Optional[dict]:
         """Receive NOSTR response directly as JSON."""
         try:
@@ -94,10 +117,9 @@ class DirectProtocol(ProtocolHandler):
                 sys.stdout.flush()
                 
                 if 'data' in response_dict:
-                    socketio_logger.info(f"[PACKET] Response received from server")
                     socketio_logger.info(f"[PROGRESS] 100.00% complete")
                 else:
-                    socketio_logger.info(f"[CONTROL] Message received via VARA")
+                    socketio_logger.info(f"[CONTROL] Message received via Server")
                 
                 return response_dict
             else:

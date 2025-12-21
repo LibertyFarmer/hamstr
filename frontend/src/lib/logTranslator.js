@@ -1,10 +1,13 @@
 const logTranslations = {
-  // Connection related - VARA Protocol (NEW - at the top for priority)
-  '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?) via VARA...': (match) => {
+  // Connection related - DirectProtocol
+  '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
     return `Attempting to connect to ${match[1]}...`;
   },
-  '\\[SESSION\\] CONNECTED via VARA to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
-    return `Connected via VARA to ${match[1]}`;
+  '\\[CLIENT\\] Connecting to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
+  return `Connecting to ${match[1]}...`;
+  },
+  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
+    return `Connected to ${match[1]}`;
   },
   
   // Connection related - Packet Protocol
@@ -14,23 +17,19 @@ const logTranslations = {
   '\\[SESSION\\] Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...': 'Sending Connection Request...',
   '\\[CONTROL\\] Received control: Type=CONNECT_ACK, Content=Connection Accepted': 'Connection confirmed',
   '\\[CONTROL\\] Sending packet: Type=CONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Establishing connection...',
-  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
-    return `Connected with server`;
-  },
   
-  // VARA Data Transfer - SIMPLIFIED (NO BYTES)
-  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Communicating with HAMSTR via VARA...',
+  // Data Transfer - VARA Backend (these come from vara_backend.py)
+  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Transmitting data...',
+  '\\[PACKET\\] Received complete message \\(\\d+ bytes\\)': 'Data received',
+  '\\[SYSTEM\\] Waiting for response via VARA...': 'Waiting for server response...',
+  '\\[PACKET\\] Receiving data via VARA...': 'Receiving data...',
+  
+  // Data Transfer - DirectProtocol
   '\\[CONTROL\\] Transmission in progress...': 'Transmission in progress...',
   '\\[CONTROL\\] Transmission complete': 'Data sent successfully',
   '\\[CONTROL\\] Data sent successfully': 'Data sent successfully',
-  '\\[SYSTEM\\] Waiting for response via VARA...': 'Waiting for server response...',
-  '\\[PACKET\\] Receiving data via VARA...': 'Receiving data from server...',
-  '\\[PACKET\\] Received complete message \\(\\d+ bytes\\)': 'Data received from server',
-  '\\[PACKET\\] Response received from server': 'Response received successfully',
-  '\\[PACKET\\] Response received via VARA': 'Server response complete',
   
-  
-  // VARA Control Messages
+  // Control Messages - DirectProtocol
   '\\[CONTROL\\] Sending ACK': 'Acknowledging receipt...',
   '\\[CONTROL\\] Sent ACK': 'Acknowledgement sent',
   '\\[CONTROL\\] Received DONE': 'Server completed transmission',
@@ -41,6 +40,7 @@ const logTranslations = {
   '\\[CONTROL\\] Received DISCONNECT': 'Server requesting disconnect',
   '\\[CONTROL\\] Sending DISCONNECT_ACK': 'Confirming disconnect...',
   '\\[CONTROL\\] Sent DISCONNECT_ACK': 'Disconnect confirmed',
+  '\\[CONTROL\\] Message received': 'Server response received',
   '\\[CONTROL\\] Message received via VARA': 'Server response received',
   '\\[CONTROL\\] Sent DONE': 'Finalizing transmission...',
   '\\[CONTROL\\] Sending DISCONNECT': 'Initiating disconnect...',
@@ -50,28 +50,35 @@ const logTranslations = {
   '\\[CONTROL\\] Received DONE_ACK': 'Server acknowledged',
   '\\[CONTROL\\] Received DISCONNECT_ACK': 'Disconnect confirmed',
   '\\[CONTROL\\] Sending DONE': 'Finalizing transmission...',
-'\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
-'\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
+  '\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
+  '\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
   
-  // VARA Specific Request Types
+  // Request Types - DirectProtocol
+  '\\[CONTROL\\] Sending 1 request': 'Fetching notes from followed accounts...',
+  '\\[CONTROL\\] Sending 2 request': 'Fetching your notes...',
+  '\\[CONTROL\\] Sending 3 request': 'Fetching global notes...',
+  '\\[CONTROL\\] Sending 4 request': 'Searching NOSTR for text...',
+  '\\[CONTROL\\] Sending 5 request': 'Searching NOSTR for hashtags...',
+  '\\[CONTROL\\] Sending 6 request': 'Fetching user notes...',
+  '\\[CLIENT\\] Using protocol layer for request': 'Preparing transmission...',
+  '\\[CONTROL\\] Sending NOTE request': 'Sending note to server...',
+  '\\[CLIENT\\] Using protocol layer for note': 'Transmitting note...',
   
-  '\\[CONTROL\\] Sending 1 request via VARA': 'Fetching notes from followed accounts...',
-  '\\[CONTROL\\] Sending 2 request via VARA': 'Fetching your notes...',
-  '\\[CONTROL\\] Sending 3 request via VARA': 'Fetching global notes...',
-  '\\[CONTROL\\] Sending 4 request via VARA': 'Searching NOSTR for text...',
-  '\\[CONTROL\\] Sending 5 request via VARA': 'Searching NOSTR for hashtags...',
-  '\\[CONTROL\\] Sending 6 request via VARA': 'Fetching user notes...',
-  '\\[CLIENT\\] Using protocol layer for request': 'Preparing VARA transmission...',
-  '\\[CONTROL\\] Sending NOTE request via VARA': 'Sending note to server...',
-  '\\[CLIENT\\] Using protocol layer for note': 'Transmitting note via VARA...',
+  // Direct Protocol - still has "via VARA" in old code (backward compatibility)
+  '\\[CONTROL\\] Sending response via VARA': 'Sending response...',
+  '\\[CONTROL\\] Sending ([A-Z_]+) request via VARA': (match) => {
+    return `Sending ${match[1]} request...`;
+  },
   
-  // VARA Session
+  // Session Management
   '\\[SESSION\\] Client disconnect complete': 'Disconnected from server',
-  '\\[SESSION\\] Disconnecting session: [\\w-]+': 'Closing VARA session...',
-  '\\[SESSION\\] VARA disconnect': 'Disconnecting from server',
+  '\\[SESSION\\] Disconnecting session: [\\w-]+': 'Closing session...',
+  '\\[SESSION\\] Client initiating disconnect \\[CLIENT_DISCONNECT\\]': 'Disconnecting from server',
   
-  // VARA Progress
+  // Progress
   '\\[PROGRESS\\] 100\\.00% complete': 'Transfer complete!',
+  '\\[CLIENT\\] Response received from server': 'Response received successfully',
+  '\\[PACKET\\] Response received from server': 'Response received successfully',
   
   // Debug messages
   '\\[DEBUG\\] Parsed response data: True': 'Data parsed successfully',
@@ -93,7 +100,6 @@ const logTranslations = {
   
   // Disconnect related - Packet Protocol
   '\\[CLIENT\\] Disconnect acknowledged by server': 'Server Disconnected',
-  '\\[SESSION] Client initiating disconnect \\[CLIENT_DISCONNECT\\]': 'Sending Disconnect Request...',
   '\\[CONTROL\\] DISCONNECT ACK received': 'Disconnecting',
   '\\[CONTROL\\] Sending packet: Type=DISCONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Sending disconnect signal...',
   '\\[CONTROL\\] Sending DISCONNECT for session: [\\w-]+': 'Closing connection...',

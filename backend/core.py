@@ -115,8 +115,19 @@ class Core:
         if not hasattr(self, '_stopped'):
             self._stopped = True
             self.running = False
+            
+            # Clean up backend system if using it
+            if self.use_backend_system and hasattr(self, 'backend_manager') and self.backend_manager:
+                try:
+                    logging.info("[CORE] Cleaning up backend system")
+                    self.backend_manager.cleanup()
+                except Exception as e:
+                    logging.error(f"[CORE] Error during backend cleanup: {e}")
+            
+            # Clean up connection manager (for legacy packet system)
             if self.connection_manager:
                 self.connection_manager.stop()
+                
             logging.debug("Core stopped [CORE_STOP]")
         else:
             logging.debug("Core stop called again, but already stopped [CORE_STOP_AGAIN]")

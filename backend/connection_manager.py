@@ -51,6 +51,12 @@ class ConnectionManager:
         self.tnc_connection = None
         logging.debug(f"ConnectionManager initialized for {'server' if is_server else 'client'} [CM]")
 
+    def _is_packet_protocol(self):
+        """Check if using PacketProtocol (needs stabilization) vs DirectProtocol (doesn't)."""
+        if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+            return self.core.protocol_manager.get_protocol_type() == 'PacketProtocol'
+        return True  # Default to packet protocol if no protocol manager
+
     def start(self):
         logging.debug("ConnectionManager start method called [CM]")
         self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port)
@@ -103,16 +109,18 @@ class ConnectionManager:
                 socketio_logger.info(f"[SESSION] Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...")
                 logging.info(f"Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...")
                 if self.core.wait_for_specific_message(session, MessageType.CONNECT_ACK, timeout=config.CONNECTION_ATTEMPT_TIMEOUT):
-                    # Add a significant delay after receiving CONNECT_ACK before sending ACK
-                    time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
+                    # Add delay for packet protocol only
+                    if self._is_packet_protocol():
+                        time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
                     
                     if self.core.send_ack(session):
                         session.state = ModemState.CONNECTED
                         socketio_logger.info(f"[SESSION] CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         logging.info(f"CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         
-                        # Add another delay to let the ACK fully transmit
-                        time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
+                        # Add delay for packet protocol only
+                        if self._is_packet_protocol():
+                            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 2)
                         
                         return session
                     else:
@@ -148,95 +156,67 @@ class ConnectionManager:
     
     def create_session(self, remote_callsign):
         """Create a new session."""
-        parsed_callsign = parse_callsign(remote_callsign)
-        session_id = f"{self.callsign[0]}-{parsed_callsign[0]}-{int(time.time())}"
-        session = Session(session_id, parsed_callsign)
+        session = Session(
+            local_callsign=self.callsign,
+            remote_callsign=remote_callsign
+        )
         session.tnc_connection = self.tnc_connection
+        logging.debug(f"Created new session: {session.id}")
         return session
     
+    def cleanup_session(self, session):
+        """Clean up a session."""
+        if session and hasattr(self.core, 'sessions') and session.id in self.core.sessions:
+            self.core.sessions.pop(session.id, None)
+            socketio_logger.info(f"[SESSION] Disconnecting session: {session.id}")
+            logging.info(f"Disconnecting session: {session.id}")
+            session.state = ModemState.DISCONNECTED
 
     def initiate_disconnect(self, session):
-        socketio_logger.info(f"[SESSION] Initiating disconnect for session: {session.id}")
-        logging.info(f"Initiating disconnect for session: {session.id}")
-        if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
+        """Initiate a disconnect for a session."""
+        if session and session.state == ModemState.CONNECTED:
+            logging.info(f"Initiating disconnect for {session.remote_callsign}")
             session.state = ModemState.DISCONNECTING
-            try:
-                if self.core.send_single_packet(session, 0, 0, "Disconnect".encode(), MessageType.DISCONNECT):
-                    if self.core.wait_for_ack(session, timeout=config.DISCONNECT_TIMEOUT):
-                        socketio_logger.info("[CONTROL] DISCONNECT ACK received")
-                        logging.info("Disconnect acknowledged")
-                    else:
-                        socketio_logger.warning("[SYSTEM] Did not receive DISCONNECT ACK")
-                        logging.warning("Did not receive ACK for DISCONNECT")
-                else:
-                    socketio_logger.error("[SYSTEM] Failed to send DISCONNECT")
-                    logging.error("Failed to send DISCONNECT")
-            except Exception as e:
-                socketio_logger.error(f"Error during disconnect: {str(e)}")
-                logging.error(f"Error during disconnect: {str(e)}")
-            finally:
+            if not self.core.send_single_packet(session, 0, 0, "DISCONNECT".encode(), MessageType.DISCONNECT):
+                logging.error("Failed to send DISCONNECT message")
+                # Force cleanup even if disconnect message fails
                 self.cleanup_session(session)
-        elif session:
-            socketio_logger.info(f"[SESSION] Session {session.id} already disconnecting or disconnected")
-            logging.info(f"Session {session.id} already disconnecting or disconnected")
-    
-    def disconnect(self, session):
-        socketio_logger.info(f"[SESSION] Disconnecting session: {session.id}")
-        logging.info(f"Disconnecting session: {session.id}")
-        if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
-            session.state = ModemState.DISCONNECTING
-            self.cleanup_session(session)  # Actually clean up the session
-        elif session:
-            socketio_logger.info(f"[SESSION] Session {session.id} already disconnecting or disconnected")
-            logging.info(f"Session {session.id} already disconnecting or disconnected")
-
-    def handle_disconnect(self, session):
-        socketio_logger.info(f"[SESSION] Handling disconnect for session: {session.id}")
-        logging.info(f"Handling disconnect for session: {session.id}")
-        self.cleanup_session(session)
+                return False
+            
+            # Wait for ACK
+            if self.core.wait_for_ack(session, timeout=config.DISCONNECT_TIMEOUT):
+                logging.info(f"Received ACK for DISCONNECT from {session.remote_callsign}")
+                self.cleanup_session(session)
+                return True
+            else:
+                logging.warning("No ACK received for DISCONNECT, cleaning up anyway")
+                self.cleanup_session(session)
+                return False
+        return False
 
     def handle_disconnect_request(self, session):
-        socketio_logger.info(f"[SESSION] Handling disconnect request for session: {session.id}")
-        logging.info(f"Handling disconnect request for session: {session.id}")
-        if session and session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
-            session.state = ModemState.DISCONNECTING
-            self.core.send_ack(session)  # Back to generic ACK
-            self.cleanup_session(session)
-        else:
-            socketio_logger.info(f"[SYSTEM] Session {session.id} already disconnecting or disconnected")
-            logging.info(f"Session {session.id} already disconnecting or disconnected")
+        """Handle a DISCONNECT request from the client."""
+        if session and session.state in [ModemState.CONNECTED, ModemState.DISCONNECTING]:
+            logging.info(f"Handling DISCONNECT request from {session.remote_callsign}")
+            socketio_logger.info(f"[CONTROL] Received DISCONNECT message from {session.remote_callsign}")
+            
+            # Send ACK for DISCONNECT
+            if self.core.send_ack(session):
+                logging.info(f"Sent ACK for DISCONNECT to {session.remote_callsign}")
+                socketio_logger.info("[CONTROL] Sent ACK for DISCONNECT")
+                self.cleanup_session(session)
+                return True
+            else:
+                logging.error(f"Failed to send ACK for DISCONNECT to {session.remote_callsign}")
+                # Clean up anyway
+                self.cleanup_session(session)
+                return False
+        return False
 
-    def cleanup_session(self, session):
-        if session.id in self.core.sessions:
-            self.core.sessions.pop(session.id, None)
-            socketio_logger.info(f"[SESSION] Cleaned up session: {session.id}")
-            logging.info(f"Cleaned up session: {session.id}")
-        
-        # For server: Don't close the TNC connection - it's shared with ConnectionManager
-        # For client: The TNC connection is session-specific and should be closed
-        if session.tnc_connection and not self.is_server:
-            try:
-                # Only close for client sessions
-                if hasattr(session.tnc_connection, 'close'):
-                    session.tnc_connection.close()
-                    logging.debug("Client TNC connection closed properly")
-            except Exception as e:
-                socketio_logger.error(f"[TNC] Error closing TNC connection: {str(e)}")
-                logging.error(f"Error closing TNC connection: {str(e)}")
-        
-        session.state = ModemState.DISCONNECTED
-        session.tnc_connection = None
-
-    def reset_for_next_connection(self):
-        logging.debug("ConnectionManager resetting for next connection [CM]")
-        if not self.tnc_connection or self.tnc_connection._closed:
-            logging.debug("Creating new TNC connection [CM]")
-            self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port)
-            if self.tnc_connection:
-                socketio_logger.info(f"[TNC] Ready for new connections on {self.tnc_host}:{self.tnc_port} [CM]")
-                logging.info(f"Ready for new connections on {self.tnc_host}:{self.tnc_port} [CM]")
-        else:
-            logging.debug("TNC connection already exists, ready for new connections [CM]")
+    def handle_disconnect(self, session):
+        """Handle a disconnect for a session."""
+        logging.info(f"Handling disconnect for {session.remote_callsign}")
+        self.cleanup_session(session)
 
     def handle_incoming_connection(self):
         connection_attempt_time = None
@@ -278,12 +258,14 @@ class ConnectionManager:
                     connection_attempt_time = time.time()
                     current_connect_session = session
                     
-                    # Add deliberate delay before sending CONNECT_ACK to allow client radio to switch modes
-                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # 250ms delay
+                    # Add deliberate delay for packet protocol only
+                    if self._is_packet_protocol():
+                        time.sleep(config.CONNECTION_STABILIZATION_DELAY)
                     
                     if self.core.send_single_packet(session, 0, 0, "Connection Accepted".encode(), MessageType.CONNECT_ACK):
-                        # Add another small delay after sending to ensure packet is fully transmitted
-                        time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # 250ms delay
+                        # Add delay for packet protocol only
+                        if self._is_packet_protocol():
+                            time.sleep(config.CONNECTION_STABILIZATION_DELAY)
                         
                         # Modified wait_for_ack with resend logic for first packet
                         start_time = time.time()
@@ -319,11 +301,13 @@ class ConnectionManager:
                             # Resend CONNECT_ACK if no response after 1/3 of timeout
                             if time.time() - start_time > (ack_timeout / 3) * (resend_count + 1) and resend_count < max_resends:
                                 logging.info(f"No ACK received yet, resending CONNECT_ACK (attempt {resend_count + 1})")
-                                time.sleep(config.CONNECTION_STABILIZATION_DELAY)  # Add delay before resending
+                                if self._is_packet_protocol():
+                                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)
                                 self.core.send_single_packet(session, 0, 0, "Connection Accepted".encode(), MessageType.CONNECT_ACK)
                                 resend_count += 1
-                                # Add delay after resend
-                                time.sleep(config.CONNECTION_STABILIZATION_DELAY)
+                                # Add delay after resend for packet protocol only
+                                if self._is_packet_protocol():
+                                    time.sleep(config.CONNECTION_STABILIZATION_DELAY)
                         
                         if ack_received:
                             session.state = ModemState.CONNECTED

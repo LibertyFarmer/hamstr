@@ -258,8 +258,15 @@ class NetworkBackendManager:
             for session in list(self.active_sessions.values()):
                 self.disconnect(session)
             
+            # Call backend's cleanup (closes listening sockets, etc.)
+            if hasattr(self.current_backend, 'cleanup'):
+                try:
+                    self.current_backend.cleanup()
+                except Exception as e:
+                    logging.error(f"[BACKEND_MGR] Backend cleanup error: {e}")
+            
             logging.info("[BACKEND_MGR] Cleanup completed")
-
+            
     def get_backend_type(self) -> BackendType:
         """
         Get the type of the current backend.

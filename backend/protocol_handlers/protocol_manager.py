@@ -75,3 +75,9 @@ class ProtocolManager:
     def receive_nostr_response(self, session, timeout: int = 30) -> Optional[dict]:
         """Route response to appropriate protocol."""
         return self._current_handler.receive_nostr_response(session, timeout)
+    
+    def wait_for_transmission_complete(self, session, timeout: int = 30) -> bool:
+        """Wait for transmission to complete (if protocol supports it)."""
+        if hasattr(self._current_handler, 'wait_for_transmission_complete'):
+            return self._current_handler.wait_for_transmission_complete(session, timeout)
+        return True  # Assume complete if not supported
