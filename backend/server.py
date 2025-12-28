@@ -688,7 +688,7 @@ class Server:
                                             }
                                             self.core.protocol_manager.send_nostr_request(session, response_data)
                                         else:
-                                            # Payment failed
+                                            # Log and show when Payment failed
                                             logging.error(f"[ZAP] Payment failed: {payment_result.get('error')}")
                                             response_data = {
                                                 'type': 'NWC_RESPONSE',
@@ -793,13 +793,12 @@ class Server:
                     logging.error(f"[SERVER] DirectProtocol error: {e}")
                     return
         
-        # OLD CODE INSERTION POINT: Insert your original code starting here
         logging.info("[SERVER] Using packet protocol")
         
         received_packets = {}
         total_packets = None
         is_note = False
-        is_sending_initial_data = False  # Initialize the flag
+        is_sending_initial_data = False 
         
         while session.state in [ModemState.CONNECTED, ModemState.DISCONNECTING] and self.running:
             source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
@@ -832,7 +831,7 @@ class Server:
                                 logging.error("Process request returned None")
                                 continue
                             
-                            # Parse response to log meaningful info
+                            # Parse response for logging
                             try:
                                 import json
                                 response_data = json.loads(response)
@@ -1101,11 +1100,12 @@ class Server:
                         missing_packets = self.check_missing_packets(received_packets, total_packets)
                         self.request_missing_packets(session, missing_packets)
                 else:
-                    # This is for the case when client is sending DONE for other message types
+                    # This is the case when client is sending DONE for other message types
                     self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                     logging.info("Sent DONE_ACK to client for non-NOTE message")
             elif msg_type == MessageType.DONE_ACK:
                 logging.info(f"Received DONE_ACK from {source_callsign}")
+                
                 # This is for the case when server is sending data (e.g., in DATA_REQUEST)
                 # Do nothing here, wait for client to initiate disconnect
             elif msg_type == MessageType.DISCONNECT:
