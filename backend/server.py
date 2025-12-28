@@ -537,15 +537,19 @@ class Server:
                                 
                                 # Wait for DISCONNECT from client
                                 logging.info("[SERVER] Waiting for DISCONNECT")
-                                disconnect_data = protocol.receive_nostr_response(session, timeout=20)
-                                if disconnect_data and disconnect_data.get('type') == 'DISCONNECT':
+                                if protocol.wait_for_control_message(session, 'DISCONNECT', timeout=30):
                                     logging.info("[SERVER] Received DISCONNECT from client")
                                     protocol.send_control_message(session, 'DISCONNECT_ACK')
-                                    logging.info("[SERVER] DISCONNECT_ACK sent (client will receive when ready)")
+                                    
+                                    # CRITICAL: Wait for VARA to finish transmitting DISCONNECT_ACK before closing socket
+                                    logging.info("[SERVER] Waiting for VARA to complete DISCONNECT_ACK transmission...")
+                                    backend = getattr(self.core.backend_manager, '_backend', None)
+                                    if backend and hasattr(backend, '_wait_for_vara_tx_complete'):
+                                        backend._wait_for_vara_tx_complete(timeout=30)
+                                    
                                     logging.info("[SERVER] Clean disconnect completed")
                                 else:
                                     logging.warning("[SERVER] Did not receive DISCONNECT")
-
                                 break  # Exit the while loop - we're done
                                 
                             if request_data.get('type') == 'DONE_ACK':

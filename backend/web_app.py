@@ -1342,16 +1342,16 @@ def send_zap():
                         client.core.protocol_manager.send_nostr_request(session, done_msg)
                         
                         # Wait for DONE_ACK
-                        client.core.protocol_manager.wait_for_control_message(session, 'DONE_ACK', timeout=10)
+                        client.core.protocol_manager.wait_for_control_message(session, 'DONE_ACK', timeout=30)
                         
-                        # Send DISCONNECT
+                        # Send DISCONNECT (don't wait for ACK - connection will close)
                         socketio_logger.info("[ZAP] Disconnecting")
                         disconnect_msg = {'type': 'DISCONNECT'}
                         client.core.protocol_manager.send_nostr_request(session, disconnect_msg)
-                        
-                        # Wait for DISCONNECT_ACK
-                        client.core.protocol_manager.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=10)
-                        
+                        socketio_logger.info("[ZAP] Disconnect signal sent")
+
+                        time.sleep(1.5)  # Give VARA time to transmit
+
                         socketio_logger.info("[ZAP] Zap operation complete")
                         
                     except Exception as e:
