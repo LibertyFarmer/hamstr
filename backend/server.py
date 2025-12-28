@@ -514,7 +514,6 @@ class Server:
                         
                         if request_data:
                             consecutive_timeouts = 0  # Reset counter
-                            # ... process request ...
                         else:
                             consecutive_timeouts += 1
                             if consecutive_timeouts >= 30:  # After 30 timeouts (30 seconds), break
@@ -530,7 +529,7 @@ class Server:
                                 logging.info("[SERVER] Received DISCONNECT from client")
                                 break
                             
-                            # Handle control messages (DONE, ACK, etc.)  <-- ADD THIS BLOCK HERE
+                            # Handle control messages (DONE, ACK, etc.)
                             if request_data.get('type') == 'DONE':
                                 logging.info("[SERVER] Received DONE from client")
                                 protocol = self.core.protocol_manager
@@ -548,6 +547,7 @@ class Server:
                                     logging.warning("[SERVER] Did not receive DISCONNECT")
 
                                 break  # Exit the while loop - we're done
+                                
                             if request_data.get('type') == 'DONE_ACK':
                                 logging.info("[SERVER] Received DONE_ACK from client")
                                 continue
@@ -575,6 +575,145 @@ class Server:
                                 
                                 continue  # Skip GET_NOTES processing
                             
+                            # Handle ZAP_REQUEST (kind 9734 zap note)
+                            if request_data.get('type') == 'ZAP_REQUEST':
+                                logging.info("[ZAP] Received ZAP_REQUEST via DirectProtocol")
+                                zap_note_json = request_data.get('data')
+                                
+                                if zap_note_json:
+                                    try:
+                                        import json
+                                        import asyncio
+                                        
+                                        # Parse JSON string if needed
+                                        if isinstance(zap_note_json, str):
+                                            zap_note_json = json.loads(zap_note_json)
+                                        
+                                        # Parse kind 9734 zap note (reuse existing function)
+                                        zap_data = self.parse_kind9734_zap_note(zap_note_json)
+                                        
+                                        if zap_data:
+                                            # Store NWC relay for later use
+                                            session.nwc_relay_url = zap_data.get('nwc_relay', 'wss://relay.getalby.com/v1')
+                                            
+                                            # Cache zap note for publishing after payment
+                                            session.zap_kind9734_note = zap_note_json
+                                            
+                                            # Generate Lightning invoice
+                                            logging.info(f"[ZAP] Generating invoice for {zap_data['amount_sats']} sats to {zap_data['lnaddr']}")
+                                            
+                                            import asyncio
+                                            invoice, error = asyncio.run(self.request_lightning_invoice_from_zap(
+                                                zap_data['lnaddr'],
+                                                zap_data['amount_sats'],
+                                                zap_note_json,
+                                                zap_data['message']
+                                            ))
+                                            
+                                            if invoice:
+                                                # Send invoice response
+                                                response_data = {
+                                                    'type': 'ZAP_INVOICE',
+                                                    'data': {
+                                                        'invoice': invoice,
+                                                        'amount_sats': zap_data['amount_sats'],
+                                                        'recipient': zap_data['lnaddr']
+                                                    }
+                                                }
+                                                success = self.core.protocol_manager.send_nostr_request(session, response_data)
+                                                
+                                                if success:
+                                                    logging.info("[ZAP] Lightning invoice sent successfully")
+                                                else:
+                                                    logging.error("[ZAP] Failed to send invoice")
+                                            else:
+                                                # Invoice generation failed
+                                                logging.error(f"[ZAP] Invoice generation failed: {error}")
+                                                error_response = {
+                                                    'type': 'ZAP_ERROR',
+                                                    'data': {'error': error or 'Invoice generation failed'}
+                                                }
+                                                self.core.protocol_manager.send_nostr_request(session, error_response)
+                                        else:
+                                            logging.error("[ZAP] Failed to parse kind 9734 zap note")
+                                            error_response = {
+                                                'type': 'ZAP_ERROR',
+                                                'data': {'error': 'Invalid zap note'}
+                                            }
+                                            self.core.protocol_manager.send_nostr_request(session, error_response)
+                                    
+                                    except Exception as e:
+                                        logging.error(f"[ZAP] Error processing zap request: {e}")
+                                        error_response = {
+                                            'type': 'ZAP_ERROR',
+                                            'data': {'error': str(e)}
+                                        }
+                                        self.core.protocol_manager.send_nostr_request(session, error_response)
+                                else:
+                                    logging.error("[ZAP] ZAP_REQUEST missing data")
+                                
+                                continue  # Skip GET_NOTES processing
+                            
+                            # Handle NWC_PAYMENT (encrypted NWC payment command)
+                            if request_data.get('type') == 'NWC_PAYMENT':
+                                logging.info("[ZAP] Received NWC_PAYMENT via DirectProtocol")
+                                nwc_command = request_data.get('data')
+                                
+                                if nwc_command:
+                                    try:
+                                        # Extract relay from session (stored during ZAP_REQUEST)
+                                        nwc_relay = getattr(session, 'nwc_relay_url', 'wss://relay.getalby.com/v1')
+                                        
+                                        # Forward payment to NWC wallet
+                                        logging.info("[ZAP] Forwarding payment to NWC wallet")
+                                        import asyncio
+                                        payment_result = asyncio.run(self.forward_nwc_payment(nwc_command, nwc_relay))
+                                        
+                                        if payment_result.get('success'):
+                                            # Payment successful
+                                            logging.info("[ZAP] Payment successful!")
+                                            
+                                            # Publish zap note if we have it cached
+                                            if hasattr(session, 'zap_kind9734_note') and session.zap_kind9734_note:
+                                                logging.info("[ZAP] Publishing zap note to NOSTR")
+                                                # Here you could publish to NOSTR relays if needed
+                                                # For now, we'll just confirm success
+                                            
+                                            response_data = {
+                                                'type': 'NWC_RESPONSE',
+                                                'data': {
+                                                    'success': True,
+                                                    'message': 'Payment successful'
+                                                }
+                                            }
+                                            self.core.protocol_manager.send_nostr_request(session, response_data)
+                                        else:
+                                            # Payment failed
+                                            logging.error(f"[ZAP] Payment failed: {payment_result.get('error')}")
+                                            response_data = {
+                                                'type': 'NWC_RESPONSE',
+                                                'data': {
+                                                    'success': False,
+                                                    'error': payment_result.get('error', 'Payment failed')
+                                                }
+                                            }
+                                            self.core.protocol_manager.send_nostr_request(session, response_data)
+                                    
+                                    except Exception as e:
+                                        logging.error(f"[ZAP] Error processing NWC payment: {e}")
+                                        error_response = {
+                                            'type': 'NWC_RESPONSE',
+                                            'data': {
+                                                'success': False,
+                                                'error': str(e)
+                                            }
+                                        }
+                                        self.core.protocol_manager.send_nostr_request(session, error_response)
+                                else:
+                                    logging.error("[ZAP] NWC_PAYMENT missing data")
+                                
+                                continue  # Skip GET_NOTES processing
+                            
                             logging.info(f"[SERVER] Received DirectProtocol request: {request_data.get('type')}")
                             
                             # Convert to format process_request expects
@@ -590,11 +729,6 @@ class Server:
                             
                             logging.info(f"[SERVER] Processing: {request_string}")
                             
-                            
-                            # Process and send response
-                            logging.info(f"[SERVER] Processing: {request_string}")
-                        
-                        
                             # Process and send response
                             response = self.process_request(request_string)
                             response_data = {'data': response}
@@ -631,18 +765,12 @@ class Server:
                                         logging.info("[SERVER] Sending DISCONNECT to client")
                                         protocol.send_control_message(session, 'DISCONNECT')
                                         
-                                        # 4. Wait for DISCONNECT_ACK (with longer timeout)
+                                        # 4. Wait for DISCONNECT_ACK
                                         logging.info("[SERVER] Waiting for DISCONNECT_ACK")
-                                        if not protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=20):
-                                            logging.warning("[SERVER] No DISCONNECT_ACK, closing anyway")
+                                        protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=30)
                                         
-                                        time.sleep(1)  # Brief wait before closing
-                                    else:
-                                        logging.warning("[SERVER] No DONE_ACK, closing anyway")
-                                else:
-                                    logging.warning("[SERVER] No ACK received, closing anyway")
-                                
-                                # 5. Close and exit loop to go back to listening
+                                        logging.info("[SERVER] Clean disconnect completed")
+                                        # Close and exit loop to go back to listening
                                 break
                             else:
                                 logging.error("[SERVER] Failed to send DirectProtocol response")
@@ -845,60 +973,43 @@ class Server:
                             else:
                                 # Invoice generation failed
                                 logging.error(f"[ZAP] Invoice generation failed: {error}")
-                                
-                                if self.core.send_ready(session):
-                                    if self.core.wait_for_ready(session):
-                                        error_response = json.dumps({
-                                            "success": False,
-                                            "error": "INVOICE_ERROR",
-                                            "message": f"Failed to generate invoice: {error}"
-                                        })
-                                        compressed_error = compress_nostr_data(error_response)
-                                        self.core.send_response(session, compressed_error)
-                        else:
-                            # Zap note parsing failed
-                            logging.error("[ZAP] Failed to parse kind 9734 zap note")
-                            
-                            if self.core.send_ready(session):
-                                if self.core.wait_for_ready(session):
-                                    error_response = json.dumps({
-                                        "success": False,
-                                        "error": "INVALID_ZAP_NOTE",
-                                        "message": "Failed to parse kind 9734 zap note"
-                                    })
-                                    compressed_error = compress_nostr_data(error_response)
-                                    self.core.send_response(session, compressed_error)
-                        
-                        # Clear received packets
-                        session.received_packets.clear()
-                        
-                    except Exception as e:
-                        logging.error(f"[ZAP] Error processing zap: {e}")
-                        if self.core.send_ready(session):
-                            if self.core.wait_for_ready(session):
                                 error_response = json.dumps({
                                     "success": False,
-                                    "error": "PROCESSING_ERROR",
-                                    "message": f"Error processing zap: {str(e)}"
+                                    "error": error or "Invoice generation failed"
                                 })
                                 compressed_error = compress_nostr_data(error_response)
-                                self.core.send_response(session, compressed_error)
                                 
+                                # Send error via READY pattern
+                                if self.core.send_ready(session):
+                                    if self.core.wait_for_ready(session):
+                                        self.core.send_response(session, compressed_error)
+                        else:
+                            logging.error("[ZAP] Failed to parse kind 9734 zap note")
+                            
+                    except Exception as e:
+                        logging.error(f"[ZAP] Error processing zap request: {e}")
+                        import traceback
+                        logging.error(f"[ZAP] Traceback: {traceback.format_exc()}")
+                    
+                    # Clear received packets for next transmission
+                    session.received_packets.clear()
+                    total_packets = None
+
             elif msg_type == MessageType.NWC_PAYMENT_REQUEST:
-                logging.info(f"[NWC] Received NWC_PAYMENT_REQUEST using proper packet system")
+                logging.info(f"[ZAP] Received NWC_PAYMENT_REQUEST")
                 
-                # Use the same pattern as ZAP handling
-                seq_num, total_packets, content = self.parse_note_packet(message)
+                # Use the same pattern as NOTE handling
+                seq_num, total, content = self.parse_note_packet(message)
                 session.received_packets[seq_num] = content
                 self.core.send_ack(session, seq_num)
                 
-                logging.info(f"Received NWC payment packet {seq_num}/{total_packets}")
+                logging.info(f"Received NWC payment packet {seq_num}/{total}")
                 
                 # Check if we have all packets
-                if len(session.received_packets) == total_packets:
+                if len(session.received_packets) == total:
                     logging.info("All NWC payment packets received, waiting for DONE from client")
                     
-                    # Wait for DONE message (like ZAP pattern)
+                    # Wait for DONE
                     done_received = False
                     start_time = time.time()
                     timeout = config.CONNECTION_TIMEOUT
@@ -906,106 +1017,69 @@ class Server:
                     while time.time() - start_time < timeout and not done_received:
                         source_callsign, message, msg_type = self.core.receive_message(session, timeout=1.0)
                         if msg_type == MessageType.DONE:
-                            logging.info("[NWC] Received DONE from client, sending DONE_ACK")
-                            # Send DONE_ACK
+                            logging.info("[ZAP] Received DONE for NWC payment, sending DONE_ACK")
                             self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                             done_received = True
                             break
                     
                     if not done_received:
-                        logging.error("[NWC] Timeout waiting for DONE from client")
+                        logging.error("[ZAP] Timeout waiting for DONE from client")
                         continue
                     
-                    # Now process the NWC payment command
+                    # Process NWC payment
                     try:
-                        # Reassemble and decompress the NWC command
-                        compressed_command = self.reassemble_note(session.received_packets)
-                        nwc_command = decompress_nostr_data(compressed_command)
+                        # Reassemble and decompress
+                        compressed_nwc = self.reassemble_note(session.received_packets)
+                        nwc_command = decompress_nostr_data(compressed_nwc)
                         
-                        logging.info(f"[NWC] Successfully received NWC command")
+                        logging.info(f"[ZAP] Processing NWC payment command")
                         
-                        # Parse the NWC command format
-                        nwc_data = self.parse_nwc_command(nwc_command)
+                        # Get relay from session
+                        nwc_relay = getattr(session, 'nwc_relay_url', 'wss://relay.getalby.com/v1')
                         
-                        logging.info(f"[DEBUG] nwc_data result: {nwc_data}")
+                        # Forward to NWC wallet
+                        import asyncio
+                        payment_result = asyncio.run(self.forward_nwc_payment(nwc_command, nwc_relay))
                         
-                        if nwc_data:
-                            logging.info("[DEBUG] About to store relay URL")
-                            # Store the relay URL in the session for later use
-                            session.nwc_relay_url = zap_data.get('nwc_relay', 'wss://relay.getalby.com/v1')
-                            logging.info("[DEBUG] Stored relay URL, about to start payment forwarding")
-                            
-                            # Forward payment to NWC wallet immediately (no premature READY)
-                            logging.info("[DEBUG] Starting async payment processing")
-                            import asyncio
-                            
-                            # Run the async payment forwarding
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                logging.info("[NWC] Starting payment forwarding...")
-                                # Use relay URL stored from zap note (not from encrypted command)
-                                relay_url = getattr(session, 'nwc_relay_url', 'wss://relay.getalby.com/v1')
-
-                                payment_result = loop.run_until_complete(
-                                    self.forward_nwc_payment(
-                                        nwc_data['encrypted_payload'],  # Use new field name
-                                        relay_url  # Use stored relay instead of parsed relay
-                                    )
-                                )
-                                logging.info(f"[NWC] Payment forwarding completed: {payment_result}")
-                            finally:
-                                loop.close()
-                            
-                            # Send payment result back to client using proper packet system
-                            response_json = json.dumps(payment_result)
-                            compressed_response = compress_nostr_data(response_json)
-
-                            # Use proper READY handshake + response like ZAP does
-                            if self.core.send_ready(session):
-                                logging.info("[NWC] Sent READY for payment response")
-                                if self.core.wait_for_ready(session):
-                                    logging.info("[NWC] Client READY received, sending payment response")
-                                    if self.core.send_response(session, compressed_response):
-                                        logging.info("[NWC] Payment response sent successfully")
-                                    else:
-                                        logging.error("[NWC] Failed to send payment response")
-                                else:
-                                    logging.error("[NWC] Client not ready for payment response")
-                            else:
-                                logging.error("[NWC] Failed to send READY for payment response")
-                                
+                        if payment_result.get('success'):
+                            logging.info("[ZAP] Payment successful!")
+                            response_data = {
+                                "success": True,
+                                "message": "Payment successful"
+                            }
                         else:
-                            logging.error("[NWC] Failed to parse NWC command")
-                            # Send error response using proper packet system
-                            error_response = json.dumps({
+                            logging.error(f"[ZAP] Payment failed: {payment_result.get('error')}")
+                            response_data = {
                                 "success": False,
-                                "error": "Invalid NWC command format"
-                            })
-                            compressed_error = compress_nostr_data(error_response)
-                            
-                            if self.core.send_ready(session):
-                                if self.core.wait_for_ready(session):
-                                    self.core.send_response(session, compressed_error)
+                                "error": payment_result.get('error', 'Payment failed')
+                            }
                         
-                        # Clear received packets
-                        session.received_packets.clear()
+                        response_json = json.dumps(response_data)
+                        compressed_response = compress_nostr_data(response_json)
                         
-                    except Exception as e:
-                        logging.error(f"[NWC] Error processing NWC command: {e}")
-                        # Send error response using proper packet system
-                        error_response = json.dumps({
-                            "success": False,
-                            "error": f"Processing error: {str(e)}"
-                        })
-                        compressed_error = compress_nostr_data(error_response)
-                        
+                        # Send payment result
                         if self.core.send_ready(session):
                             if self.core.wait_for_ready(session):
-                                self.core.send_response(session, compressed_error)
-                                
+                                if self.core.send_response(session, compressed_response):
+                                    logging.info("[ZAP] Payment response sent successfully")
+                                else:
+                                    logging.error("[ZAP] Failed to send payment response")
+                            else:
+                                logging.error("[ZAP] Client not ready for payment response")
+                        else:
+                            logging.error("[ZAP] Failed to send READY for payment response")
+                        
+                    except Exception as e:
+                        logging.error(f"[ZAP] Error processing NWC payment: {e}")
+                        import traceback
+                        logging.error(f"[ZAP] Traceback: {traceback.format_exc()}")
+                    
+                    # Clear received packets
+                    session.received_packets.clear()
+                    total_packets = None
+
             elif msg_type == MessageType.ZAP_SUCCESS_CONFIRM:
-                logging.info("[ZAP] Payment successful! Publishing zap note...")
+                logging.info("[ZAP] Payment success confirmation received! Publishing zap note...")
                 asyncio.run(self.handle_zap_success(session))
 
             elif msg_type == MessageType.ZAP_FAILED:

@@ -177,6 +177,35 @@ const logTranslations = {
   // Zap Flow - Disconnect handling
   '\\[CONTROL\\] Received control: Type=DISCONNECT, Content=Disconnect': 'Server requesting disconnect',
   '\\[CLIENT\\] Received disconnect from server, sending ACK': 'Confirming disconnect...',
+
+   // Zap Flow - DirectProtocol (VARA)
+  '\\[ZAP\\] Sending kind 9734 zap note via DirectProtocol': 'Sending zap request...',
+  '\\[ZAP\\] Zap request sent, waiting for invoice': 'Generating Lightning invoice...',
+  '\\[ZAP\\] Invoice received: .*': 'Invoice received',
+  '\\[ZAP\\] Creating encrypted NWC payment command': 'Creating payment command...',
+  '\\[ZAP\\] Sending NWC payment command': 'Sending payment to wallet...',
+  '\\[ZAP\\] NWC payment sent, waiting for response': 'Waiting for wallet response...',
+  '\\[ZAP\\] ⚡ Payment successful!': '⚡ Zap sent successfully!',
+  '\\[ZAP\\] Payment failed: (.*)': (match) => {
+    return `❌ Payment failed: ${match[1]}`;
+  },
+  '\\[ZAP\\] Sending DONE signal': 'Finalizing zap...',
+  '\\[ZAP\\] Disconnecting': 'Closing connection...',
+  '\\[ZAP\\] Zap operation complete': 'Zap completed!',
+  
+   
+  // Zap Errors - DirectProtocol
+  '\\[ZAP\\] Failed to send zap request': '❌ Failed to send zap request',
+  '\\[ZAP\\] Timeout waiting for invoice': '❌ Invoice generation timeout',
+  '\\[ZAP\\] Server error: (.*)': (match) => {
+    return `❌ Server error: ${match[1]}`;
+  },
+  '\\[ZAP\\] Failed to create NWC payment command': '❌ Payment command failed',
+  '\\[ZAP\\] Failed to send NWC payment': '❌ Failed to send payment',
+  '\\[ZAP\\] Timeout waiting for payment response': '❌ Payment timeout',
+  '\\[ZAP\\] DirectProtocol zap error: (.*)': (match) => {
+    return `❌ Zap error: ${match[1]}`;
+  },
   
   // Packet handling and progress
   '\\[PACKET\\] DONE packet sent': 'Sending completion signal...',
