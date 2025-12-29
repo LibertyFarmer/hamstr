@@ -66,7 +66,7 @@ async def get_display_name(client, pubkey):
                 return name, lud16
             
         # If no profile found or no name fields, convert pubkey to npub
-        npub = Keys.parse_public_key(pubkey.to_hex()).to_bech32()
+        npub = pubkey.to_bech32()
         return npub, None
         
     except Exception as e:
@@ -521,6 +521,9 @@ def search_nostr(request_type, number, search_text=None):
                     try:
                         await client.add_relays(NOSTR_RELAYS)
                         await client.connect()
+                        
+                        # Give the client a moment to fully establish relay connections
+                        await asyncio.sleep(0.5)
                         
                         events = []
                         for result in results:

@@ -13,6 +13,25 @@ import utils
 from socketio_logger import get_socketio_logger
 from nsec_storage import NSECStorage
 
+# New modular network handler imports
+
+try:
+    from network_backends.backend_manager import NetworkBackendManager
+    from network_backends.base_backend import BackendType
+    BACKENDS_AVAILABLE = True
+except ImportError:
+    BACKENDS_AVAILABLE = False
+    logging.warning("[CORE] Backend system not available - using legacy mode")
+
+# New modular protocol handler import
+
+try:
+    from protocol_handlers import ProtocolManager
+    PROTOCOL_HANDLERS_AVAILABLE = True
+except ImportError:
+    PROTOCOL_HANDLERS_AVAILABLE = False
+    logging.warning("[CORE] Protocol handlers not available")
+
 # Regular logger
 logger = logging.getLogger(__name__)
 
@@ -28,9 +47,54 @@ class Core:
         self.tnc_host = config.SERVER_HOST if is_server else config.CLIENT_HOST
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
+        
+        # Always initialize legacy components FIRST (backend_manager needs these!)
         self.connection_manager = ConnectionManager(is_server, self)
         self.packet_handler = PacketHandler(self)
         self.message_processor = MessageProcessor(self)
+        
+        # NEW: Backend system detection and activation (AFTER legacy components exist)
+        self.use_backend_system = False
+        self.backend_manager = None
+        
+        if BACKENDS_AVAILABLE and hasattr(config, 'BACKEND_TYPE'):
+            backend_type = getattr(config, 'BACKEND_TYPE', 'legacy')
+            
+            # Enable backend system for non-legacy modes
+            if backend_type.lower() != 'legacy':
+                try:
+                    self.backend_manager = NetworkBackendManager(config, is_server, core_instance=self)
+                    
+                    if not self.backend_manager.is_legacy_mode():
+                        self.use_backend_system = True
+                        logging.info(f"[CORE] Using {backend_type} backend system")
+                    else:
+                        logging.info(f"[CORE] Backend type '{backend_type}' fell back to legacy")
+                        
+                except Exception as e:
+                    logging.error(f"[CORE] Backend system initialization failed: {e}")
+                    logging.info("[CORE] Falling back to legacy mode")
+                    self.backend_manager = None
+        
+        if self.use_backend_system:
+            logging.info(f"[CORE] Backend system active - legacy components in standby mode")
+        else:
+            logging.info("[CORE] Using legacy packet system")
+        
+        # Initialize protocol manager if using backend system
+        self.protocol_manager = None
+        if self.use_backend_system and PROTOCOL_HANDLERS_AVAILABLE:
+            try:
+                self.protocol_manager = ProtocolManager(
+                    self.backend_manager, 
+                    config, 
+                    core_instance=self
+                )
+                logging.info(f"[CORE] Protocol manager: {self.protocol_manager.get_protocol_type()}")
+            except Exception as e:
+                logging.error(f"[CORE] Protocol manager init failed: {e}")
+                self.protocol_manager = None
+        
         self.sessions = {}
         self.tnc_connection = None
         self.running = True
@@ -39,20 +103,42 @@ class Core:
             self.nsec_storage = NSECStorage(base_dir)
 
     def start(self):
-        return self.connection_manager.start()
+        if self.use_backend_system:
+            # Backend system - no TNC startup needed
+            logging.info("[CORE] Backend system ready - VARA will connect on-demand")
+            return True
+        else:
+            # Legacy system - start TNC connection
+            return self.connection_manager.start()
 
     def stop(self):
         if not hasattr(self, '_stopped'):
             self._stopped = True
             self.running = False
+            
+            # Clean up backend system if using it
+            if self.use_backend_system and hasattr(self, 'backend_manager') and self.backend_manager:
+                try:
+                    logging.info("[CORE] Cleaning up backend system")
+                    self.backend_manager.cleanup()
+                except Exception as e:
+                    logging.error(f"[CORE] Error during backend cleanup: {e}")
+            
+            # Clean up connection manager (for legacy packet system)
             if self.connection_manager:
                 self.connection_manager.stop()
+                
             logging.debug("Core stopped [CORE_STOP]")
         else:
             logging.debug("Core stop called again, but already stopped [CORE_STOP_AGAIN]")
 
     def connect(self, remote_callsign):
-        return self.connection_manager.connect(remote_callsign)
+        if self.use_backend_system:
+            # Route through backend system
+            return self.backend_manager.connect(remote_callsign)
+        else:
+            # Legacy system
+            return self.connection_manager.connect(remote_callsign)
 
     def create_session(self, remote_callsign):
         return self.connection_manager.create_session(remote_callsign)
@@ -177,7 +263,12 @@ class Core:
         return self.packet_handler.split_message(message)
 
     def handle_incoming_connection(self):
-        return self.connection_manager.handle_incoming_connection()
+        if self.use_backend_system:
+            # For VARA backend - listen for incoming connection
+            # Pass a dummy tuple that will be ignored for server mode
+            return self.backend_manager.connect(('ANY', 0))
+        else:
+            return self.connection_manager.handle_incoming_connection()
 
     def send_data_request(self, session, request):
         return self.message_processor.send_data_request(session, request)
@@ -711,12 +802,62 @@ class Core:
         socketio_logger.info("[SYSTEM] Resetting for next connection")
         logging.info("Resetting for next connection")
         self.sessions.clear()
-        if self.is_server:
-            self.connection_manager.reset_for_next_connection()
+        
+        if self.use_backend_system:
+            # Backend system - just clear sessions, no TNC reset needed
+            if hasattr(self, 'backend_manager') and self.backend_manager:
+                # Backend manager will handle cleanup automatically
+                logging.info("[CORE] Backend system reset - ready for next connection")
         else:
-            self.connection_manager.stop()
-            self.connection_manager = ConnectionManager(self.is_server, self)
-            self.connection_manager.start()
+            # Legacy system
+            if self.is_server:
+                self.connection_manager.reset_for_next_connection()
+            else:
+                self.connection_manager.stop()
+                self.connection_manager = ConnectionManager(self.is_server, self)
+                self.connection_manager.start()
     
     def check_missing_packets(self, session):
         return self.packet_handler.check_missing_packets(session)
+    
+    def get_system_status(self):
+        return {
+            "core_system": "legacy",
+            "backend_system_available": BACKENDS_AVAILABLE,
+            "backend_type": getattr(config, 'BACKEND_TYPE', 'legacy'),
+            "use_backend_system": False
+        }
+    
+    def send_request_via_protocol(self, session, request_type, count=2, additional_params=None):
+        """
+        Send NOSTR request via protocol layer.
+        Routes to DirectProtocol (VARA) or PacketProtocol (packet radio).
+        """
+        if not self.protocol_manager:
+            logging.warning("[CORE] No protocol manager - falling back to legacy")
+            # TODO: Call your existing request method here
+            return False, None
+        
+        try:
+            # Prepare request data
+            request_data = {
+                'type': str(request_type),
+                'count': count
+            }
+            
+            if additional_params:
+                request_data['params'] = additional_params
+            
+            # Send via protocol layer
+            success = self.protocol_manager.send_nostr_request(session, request_data)
+            
+            if success:
+                # Receive response via protocol layer
+                response = self.protocol_manager.receive_nostr_response(session, timeout=60)
+                return success, response
+            else:
+                return False, None
+                
+        except Exception as e:
+            logging.error(f"[CORE] Protocol request failed: {e}")
+            return False, None

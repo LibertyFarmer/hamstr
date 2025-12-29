@@ -1,6 +1,9 @@
 [RADIO]
-client_callsign = (YOUR_CLIENT_CALLSIGN, 0)
-hamstr_server = (SERVER_CALLSIGN, 0)
+client_callsign = (YOUR_CLIENT_CALLSIGN, SSID)
+hamstr_server = (SERVER_CALLSIGN, SSID)
+
+[NOSTR]
+default_note_request_count = 2
 
 [TNC]
 # Connection type: tcp or serial
@@ -10,12 +13,35 @@ connection_type = tcp
 client_host = localhost
 client_port = 8001
 
-# Serial settings (when connection_type = serial)
+# Serial Port settings (when connection_type = serial)
 # Windows: COM3, COM4, etc.
 # Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
 # macOS: /dev/cu.usbserial-*, /dev/cu.SLAB_USBtoUART, etc.
 serial_port = COM3
 serial_speed = 57600
 
-[NOSTR]
-default_note_request_count = 2
+
+[NETWORK]
+# Client backend configuration (must match server)
+# This overrides the main settings.ini if needed for client-specific setup
+# backend_type = legacy
+
+# VARA Client Settings (when using VARA backend)
+[VARA]
+# Client uses these ports to connect to local VARA instance
+command_port = 8300
+data_port = 8301
+# If running VARA on different host:
+# vara_host = localhost
+
+# Reticulum Client Settings (when using Reticulum backend)
+[RETICULUM]
+# Client-specific Reticulum interface
+# interface_path = /dev/ttyUSB0
+# node_identity_file = client_identity
+
+# FLDIGI Client Settings (when using FLDIGI)
+[FLDIGI]
+# Client FLDIGI connection
+# fldigi_host = localhost
+# fldigi_port = 7342

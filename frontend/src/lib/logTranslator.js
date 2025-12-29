@@ -1,16 +1,93 @@
 const logTranslations = {
-  // Connection related
+  // Connection related - DirectProtocol
+  '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
+    return `Attempting to connect to ${match[1]}...`;
+  },
+  '\\[CLIENT\\] Connecting to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
+  return `Connecting to ${match[1]}...`;
+  },
+  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+(?:-\\d+)?)': (match) => {
+    return `Connected to ${match[1]}`;
+  },
+  
+  // Connection related - Packet Protocol
   '\\[SYSTEM\\] Sending Connection Request': 'Connecting...',
   '\\[CLIENT\\] Failed to connect to server.*': 'Connection to server failed',
   '\\[CONTROL\\] CONNECT ACK RECEIVED': 'Connected',
   '\\[SESSION\\] Sending CONNECTION REQUEST. Waiting for CONNECT_ACK...': 'Sending Connection Request...',
   '\\[CONTROL\\] Received control: Type=CONNECT_ACK, Content=Connection Accepted': 'Connection confirmed',
   '\\[CONTROL\\] Sending packet: Type=CONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Establishing connection...',
-  '\\[SESSION\\] CONNECTED to ([A-Z0-9]+-\\d+)': (match) => {
-    return `Connected with server`;
+  
+  // Data Transfer - VARA Backend (these come from vara_backend.py)
+  '\\[CONTROL\\] Sending via VARA \\(\\d+ bytes\\)': 'Transmitting data...',
+  '\\[PACKET\\] Received complete message \\(\\d+ bytes\\)': 'Data received',
+  '\\[SYSTEM\\] Waiting for response via VARA...': 'Waiting for server response...',
+  '\\[PACKET\\] Receiving data via VARA...': 'Receiving data...',
+  
+  // Data Transfer - DirectProtocol
+  '\\[CONTROL\\] Transmission in progress...': 'Transmission in progress...',
+  '\\[CONTROL\\] Transmission complete': 'Data sent successfully',
+  '\\[CONTROL\\] Data sent successfully': 'Data sent successfully',
+  
+  // Control Messages - DirectProtocol
+  '\\[CONTROL\\] Sending ACK': 'Acknowledging receipt...',
+  '\\[CONTROL\\] Sent ACK': 'Acknowledgement sent',
+  '\\[CONTROL\\] Received DONE': 'Server completed transmission',
+  '\\[CONTROL\\] Sending DONE_ACK': 'Confirming completion...',
+  '\\[CONTROL\\] Sent DONE_ACK': 'Completion confirmed',
+  '\\[CONTROL\\] Waiting for DONE from server': 'Waiting for server to finish...',
+  '\\[CONTROL\\] Waiting for DISCONNECT from server': 'Waiting for disconnect signal...',
+  '\\[CONTROL\\] Received DISCONNECT': 'Server requesting disconnect',
+  '\\[CONTROL\\] Sending DISCONNECT_ACK': 'Confirming disconnect...',
+  '\\[CONTROL\\] Sent DISCONNECT_ACK': 'Disconnect confirmed',
+  '\\[CONTROL\\] Message received': 'Server response received',
+  '\\[CONTROL\\] Message received via VARA': 'Server response received',
+  '\\[CONTROL\\] Sent DONE': 'Finalizing transmission...',
+  '\\[CONTROL\\] Sending DISCONNECT': 'Initiating disconnect...',
+  '\\[CONTROL\\] Sent DISCONNECT': 'Disconnect signal sent',
+  '\\[CONTROL\\] No DONE_ACK received': 'Waiting for server acknowledgment...',
+  '\\[CONTROL\\] No DISCONNECT_ACK received': 'Disconnect completed',
+  '\\[CONTROL\\] Received DONE_ACK': 'Server acknowledged',
+  '\\[CONTROL\\] Received DISCONNECT_ACK': 'Disconnect confirmed',
+  '\\[CONTROL\\] Sending DONE': 'Finalizing transmission...',
+  '\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
+  '\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
+  '\\[CONTROL\\] Sending response': 'Sending data...',
+  '\\[CLIENT\\] Using DirectProtocol for zap': 'Preparing zap via VARA...',
+  
+  // Request Types - DirectProtocol
+  '\\[CONTROL\\] Sending 1 request': 'Fetching notes from followed accounts...',
+  '\\[CONTROL\\] Sending 2 request': 'Fetching your notes...',
+  '\\[CONTROL\\] Sending 3 request': 'Fetching global notes...',
+  '\\[CONTROL\\] Sending 4 request': 'Searching NOSTR for text...',
+  '\\[CONTROL\\] Sending 5 request': 'Searching NOSTR for hashtags...',
+  '\\[CONTROL\\] Sending 6 request': 'Fetching user notes...',
+  '\\[CLIENT\\] Using protocol layer for request': 'Preparing transmission...',
+  '\\[CONTROL\\] Sending NOTE request': 'Sending note to server...',
+  '\\[CLIENT\\] Using protocol layer for note': 'Transmitting note...',
+  
+  // Direct Protocol - still has "via VARA" in old code (backward compatibility)
+  '\\[CONTROL\\] Sending response via VARA': 'Sending response...',
+  '\\[CONTROL\\] Sending ([A-Z_]+) request via VARA': (match) => {
+    return `Sending ${match[1]} request...`;
   },
   
-  // Ready & Data Request related
+  // Session Management
+  '\\[SESSION\\] Client disconnect complete': 'Disconnected from server',
+  '\\[SESSION\\] Disconnecting session: [\\w-]+': 'Closing session...',
+  '\\[SESSION\\] Client initiating disconnect \\[CLIENT_DISCONNECT\\]': 'Disconnecting from server',
+  
+  // Progress
+  '\\[PROGRESS\\] 100\\.00% complete': 'Transfer complete!',
+  '\\[CLIENT\\] Response received from server': 'Response received successfully',
+  '\\[PACKET\\] Response received from server': 'Response received successfully',
+  
+  // Debug messages
+  '\\[DEBUG\\] Parsed response data: True': 'Data parsed successfully',
+  '\\[DEBUG\\] About to process received notes': 'Processing received notes...',
+  '\\[DEBUG\\] Finished processing notes': 'Notes processed successfully',
+  
+  // Ready & Data Request related - Packet Protocol
   '\\[CLIENT\\] Received READY from server, sending READY': 'Ready to Send',
   '\\[SESSION\\] DATA_REQUEST sent and READY state achieved': "Ready for Packets",
   '\\[CONTROL\\] Sending TYPE: DATA_REQUEST': 'Sending Note Request',
@@ -23,9 +100,8 @@ const logTranslations = {
     return `Requesting Notes from server.`;
   },
   
-  // Disconnect related
+  // Disconnect related - Packet Protocol
   '\\[CLIENT\\] Disconnect acknowledged by server': 'Server Disconnected',
-  '\\[SESSION] Client initiating disconnect \\[CLIENT_DISCONNECT\\]': 'Sending Disconnect Request...',
   '\\[CONTROL\\] DISCONNECT ACK received': 'Disconnecting',
   '\\[CONTROL\\] Sending packet: Type=DISCONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Sending disconnect signal...',
   '\\[CONTROL\\] Sending DISCONNECT for session: [\\w-]+': 'Closing connection...',
@@ -56,6 +132,9 @@ const logTranslations = {
   '\\[CONTROL\\] Sending packet: Type=ZAP_KIND9734_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
     return `Sending Zap Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
   },
+  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
+    return `Zap Packet ${match[1]} confirmed`;
+  },
 
   // Zap Flow - Invoice Generation
   '\\[CLIENT\\] READY sent, waiting for invoice response': 'Generating Lightning invoice...',
@@ -68,7 +147,7 @@ const logTranslations = {
     return `Sending payment command...`;
   },
   '\\[CONTROL\\] Sending packet: Type=NWC_PAYMENT_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
-    return `Sent Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
+    return `Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
   },
 
   // Zap Flow - Invoice Response
@@ -95,12 +174,40 @@ const logTranslations = {
   '\\[CONTROL\\] Sending packet: Type=ZAP_SUCCESS_CONFIRM, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Confirming zap success...',
 
   // Zap Flow - Ready states
-  '\\[CLIENT\\] Received READY from server, sending READY': 'Ready to receive invoice',
   '\\[CONTROL\\] Received control: Type=READY, Content=ZAP_PUBLISHED': '⚡ Zap live on NOSTR!',
   
   // Zap Flow - Disconnect handling
   '\\[CONTROL\\] Received control: Type=DISCONNECT, Content=Disconnect': 'Server requesting disconnect',
   '\\[CLIENT\\] Received disconnect from server, sending ACK': 'Confirming disconnect...',
+
+   // Zap Flow - DirectProtocol (VARA)
+  '\\[ZAP\\] Sending kind 9734 zap note via DirectProtocol': 'Sending zap request...',
+  '\\[ZAP\\] Zap request sent, waiting for invoice': 'Generating Lightning invoice...',
+  '\\[ZAP\\] Invoice received: .*': 'Invoice received',
+  '\\[ZAP\\] Creating encrypted NWC payment command': 'Creating payment command...',
+  '\\[ZAP\\] Sending NWC payment command': 'Sending payment to wallet...',
+  '\\[ZAP\\] NWC payment sent, waiting for response': 'Waiting for wallet response...',
+  '\\[ZAP\\] ⚡ Payment successful!': '⚡ Zap sent successfully!',
+  '\\[ZAP\\] Payment failed: (.*)': (match) => {
+    return `❌ Payment failed: ${match[1]}`;
+  },
+  '\\[ZAP\\] Sending DONE signal': 'Finalizing zap...',
+  '\\[ZAP\\] Disconnecting': 'Closing connection...',
+  '\\[ZAP\\] Zap operation complete': 'Zap completed!',
+  
+   
+  // Zap Errors - DirectProtocol
+  '\\[ZAP\\] Failed to send zap request': '❌ Failed to send zap request',
+  '\\[ZAP\\] Timeout waiting for invoice': '❌ Invoice generation timeout',
+  '\\[ZAP\\] Server error: (.*)': (match) => {
+    return `❌ Server error: ${match[1]}`;
+  },
+  '\\[ZAP\\] Failed to create NWC payment command': '❌ Payment command failed',
+  '\\[ZAP\\] Failed to send NWC payment': '❌ Failed to send payment',
+  '\\[ZAP\\] Timeout waiting for payment response': '❌ Payment timeout',
+  '\\[ZAP\\] DirectProtocol zap error: (.*)': (match) => {
+    return `❌ Zap error: ${match[1]}`;
+  },
   
   // Packet handling and progress
   '\\[PACKET\\] DONE packet sent': 'Sending completion signal...',
@@ -156,9 +263,6 @@ const logTranslations = {
   },
   '\\[CONTROL\\] Sending packet: Type=NOTE, Seq=(\\d+)/(\\d+)': (match) => {
     return `Sending Packet ${match[1].padStart(4, '0')} of ${match[2].padStart(4, '0')}`;
-  },
-  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
-    return `Packet ${match[1].padStart(4, '0')} confirmed`;
   },
   '\\[PACKET\\] Received Message: Type=RESPONSE, Seq=(\\d{4})/(\\d{4})': (match) => {
     const [current, total] = [parseInt(match[1]), parseInt(match[2])];

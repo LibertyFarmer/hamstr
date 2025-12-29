@@ -12,16 +12,17 @@
     
     $: apiBaseUrl = $baseURL;
 
-    async function handleSearch({ searchType, searchText }) {
-        if ($isRequestingNotes) return;
+async function handleSearch({ searchType, searchText }) {
+    if ($isRequestingNotes) return;
 
-        // Use the bottom nav component's functionality for consistent handling
-        if (window.bottomNavComponent?.handleRequestNotes) {
-            dispatch('clearLogs');
-            showSearchModal = false;  // Close the search modal
-            window.bottomNavComponent.handleRequestNotes(searchType, searchText);
-        }
+    if (window.bottomNavComponent?.handleRequestNotes) {
+        dispatch('clearLogs');
+        showSearchModal = false;
+        window.bottomNavComponent.progressDrawerOpen = true;  // ✅ Open drawer!
+        window.bottomNavComponent.handleRequestNotes(searchType, searchText);
     }
+}
+
 </script>
 <div class="w-full bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-600">
     <div class="w-full px-6 py-3">

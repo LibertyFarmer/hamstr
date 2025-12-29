@@ -1,5 +1,5 @@
 [RADIO]
-SERVER_CALLSIGN = (CALLSIGN, SSID)
+SERVER_CALLSIGN = (YOUR_SERVER_CALLSIGN, 0)
 
 [TNC]
 # Connection type: tcp or serial
@@ -11,10 +11,36 @@ SERVER_PORT = 8002
 
 # Serial settings (when CONNECTION_TYPE = serial)
 # Windows: COM3, COM4, etc.
-# Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
+# Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.  
 # macOS: /dev/cu.usbserial-*, /dev/cu.SLAB_USBtoUART, etc.
 SERIAL_PORT = COM3
 SERIAL_SPEED = 57600
+
+[NETWORK]
+# Server backend configuration (must match client)
+# This overrides the main settings.ini if needed for server-specific setup
+# backend_type = legacy
+
+# VARA Server Settings (when using VARA backend)
+[VARA]
+# Server uses these ports to connect to local VARA instance
+command_port = 8400
+data_port = 8401
+# If running VARA on different host:
+# vara_host = localhost
+
+# Reticulum Server Settings (When Using Reticulum)
+[RETICULUM]
+# Server-specific Reticulum interface  
+# interface_path = /dev/ttyUSB1
+# node_identity_file = server_identity
+# announce_as_server = true
+
+# FLDIGI Server Settings (When using FLDIGI)
+[FLDIGI]
+# Server FLDIGI connection
+# fldigi_host = localhost
+# fldigi_port = 7343
 
 [NOSTR]
 RELAYS = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol, wss://relay.getalby.com/v1

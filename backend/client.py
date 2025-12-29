@@ -15,7 +15,6 @@ from protocol_utils import compress_nostr_data, decompress_nostr_data
 socketio_logger = get_socketio_logger()
 
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Client:
@@ -41,14 +40,21 @@ class Client:
             additional_params: Optional string of additional parameters
         """
         if not self.session or self.session.state == ModemState.DISCONNECTED:
+            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+            
             self.session = self.core.connect(server_callsign)
             if not self.session:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-            # Add a moderate stabilization delay after connection established
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
+            # Log connection
+            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
+            
+            # Add stabilization delay only for PacketProtocol (DirectProtocol doesn't need it)
+            if not hasattr(self.core, 'protocol_manager') or \
+            self.core.protocol_manager.get_protocol_type() == 'PacketProtocol':
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
 
         try:
             # For specific user requests, derive NPUB from stored NSEC
@@ -62,53 +68,151 @@ class Client:
                     }
                 additional_params = npub
 
-                # Format request with space and pipe separation
-            request = f"GET_NOTES {request_type.value}|{count}"
-            if additional_params:
-                request = f"{request}|{additional_params}"
+            # NEW: Route through protocol layer if available
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                socketio_logger.info("[CLIENT] Using protocol layer for request")
+                logging.info(f"Using protocol layer: {self.core.protocol_manager.get_protocol_type()}")
                 
-            logging.info(f"Sending request: {request}")
-            
-            # Add significant delay before sending DATA_REQUEST
-            time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
-            
-            for attempt in range(config.RETRY_COUNT):
-                if self.core.send_data_request(self.session, request):
-                    socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
-                    logging.info("DATA_REQUEST sent and READY state achieved")
-                    
-                    # Use the core receive_response method without passing a timeout
-                    # The method will use the global CONNECTION_TIMEOUT from config
-                    response = self.core.receive_response(self.session)
+                # Prepare request data for protocol layer
+                request_data = {
+                    'type': request_type.value,
+                    'count': count
+                }
+                if additional_params:
+                    request_data['params'] = additional_params
+                
+                # Send via protocol layer
+                success = self.core.protocol_manager.send_nostr_request(self.session, request_data)
+                
+                if success:
+                    # Receive response via protocol layer
+                    print(f"DEBUG: About to call receive_nostr_response")
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=180)
+                    print(f"DEBUG: Got response: {response}")
                     
                     if response:
-                        try:
-                            response_data = json.loads(response)
-                            if not response_data.get('success', True):
-                                error_type = response_data.get('error_type')
-                                error_message = response_data.get('message')
-                                socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
-                                # Return the error response for frontend handling
-                                return True, response
-                        except json.JSONDecodeError:
-                            pass  # Not an error response, continue normal processing
+                        # Handle response based on protocol type
+                        if self.core.protocol_manager.get_protocol_type() == 'DirectProtocol':
+                            # Direct protocol response
+                            response_data = response.get('data', '')
+                        else:
+                            # Packet protocol response
+                            response_data = response.get('data', '')
                         
-                        decompressed_response = decompress_nostr_data(response)
-                        socketio_logger.info(f"[CLIENT] JSON NOTE: {decompressed_response}")
-                        logging.info(f"Server response: {decompressed_response}")
-                        return True, response
+                        if response_data:
+                            try:
+                                # Check if it's an error response
+                                parsed_response = json.loads(response_data)
+                                if not parsed_response.get('success', True):
+                                    error_type = parsed_response.get('error_type')
+                                    error_message = parsed_response.get('message')
+                                    socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
+                                    if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                                        socketio_logger.info("[SESSION] Client initiating disconnect")
+                                        self.core.backend_manager.disconnect(self.session)
+                                        self.session = None
+                                    return True, response_data
+                            except json.JSONDecodeError:
+                                pass  # Not an error response, continue normal processing
+                            
+                            # Decompress and return response
+                            decompressed_response = decompress_nostr_data(response_data)
+                            socketio_logger.info(f"[PACKET] Response received from server")
+                            logging.info(f"Protocol response received: {len(decompressed_response)} chars")
+
+                            # Direct disconnect flow: send ACK → wait for DONE → send DONE_ACK → wait for DISCONNECT → send DISCONNECT_ACK → close
+                            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                                protocol = self.core.protocol_manager
+                                
+                                # NEW: Send ACK after receiving full response
+                                socketio_logger.info("[CONTROL] Sending ACK")
+                                protocol.send_control_message(self.session, 'ACK')
+                                
+                                # 1. Wait for DONE from server
+                                socketio_logger.info("[CONTROL] Waiting for DONE from server")
+                                if protocol.wait_for_control_message(self.session, 'DONE', timeout=30):
+                                    
+                                    # 2. Send DONE_ACK
+                                    socketio_logger.info("[CONTROL] Sending DONE_ACK")
+                                    protocol.send_control_message(self.session, 'DONE_ACK')
+                                    
+                                    # 3. Wait for DISCONNECT from server
+                                    socketio_logger.info("[CONTROL] Waiting for DISCONNECT from server")
+                                    if protocol.wait_for_control_message(self.session, 'DISCONNECT', timeout=30):
+                                        
+                                        # 4. Send DISCONNECT_ACK
+                                        socketio_logger.info("[CONTROL] Sending DISCONNECT_ACK")
+                                        protocol.send_control_message(self.session, 'DISCONNECT_ACK')
+                                        time.sleep(2)  # Give server time to receive
+                                
+                                # 5. Close connection
+                                self.core.backend_manager.disconnect(self.session)
+                                self.session = None
+                                socketio_logger.info("[SESSION] Client disconnect complete")
+
+                            return True, response_data
+
+                        else:
+                            socketio_logger.error("[CLIENT] Empty response from protocol layer")
+                            return False, None
                     else:
-                        socketio_logger.error("[CLIENT] No response received from server")
-                        logging.error("No response received from server")
-                        break
+                        socketio_logger.error("[CLIENT] No response from protocol layer")
+                        return False, None
                 else:
-                    socketio_logger.warning(f"[SESSION] Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
-                    logging.warning(f"Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
-                    if attempt < config.RETRY_COUNT - 1:
-                        time.sleep(config.ACK_TIMEOUT)
+                    socketio_logger.error("[CLIENT] Protocol layer request failed")
+                    return False, None
+            
             else:
-                socketio_logger.error("[CLIENT] Failed to send request after all retry attempts")
-                logging.error("Failed to send request after all retry attempts")
+                # FALLBACK: Use existing legacy packet protocol
+                socketio_logger.info("[CLIENT] Using legacy packet protocol")
+                logging.info("No protocol manager - using legacy packet system")
+                
+                # Format request with space and pipe separation
+                request = f"GET_NOTES {request_type.value}|{count}"
+                if additional_params:
+                    request = f"{request}|{additional_params}"
+                    
+                logging.info(f"Sending request: {request}")
+                
+                # Add significant delay before sending DATA_REQUEST
+                time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.5)
+                
+                for attempt in range(config.RETRY_COUNT):
+                    if self.core.send_data_request(self.session, request):
+                        socketio_logger.info("[SESSION] DATA_REQUEST sent and READY state achieved")
+                        logging.info("DATA_REQUEST sent and READY state achieved")
+                        
+                        # Use the core receive_response method
+                        response = self.core.receive_response(self.session)
+                        
+                        if response:
+                            try:
+                                response_data = json.loads(response)
+                                if not response_data.get('success', True):
+                                    error_type = response_data.get('error_type')
+                                    error_message = response_data.get('message')
+                                    socketio_logger.error(f"[SERVER ERROR] Type: {error_type}, Message: {error_message}")
+                                    return True, response
+                            except json.JSONDecodeError:
+                                pass  # Not an error response, continue normal processing
+                            
+                            decompressed_response = decompress_nostr_data(response)
+                            socketio_logger.info(f"[CLIENT] JSON NOTE: {decompressed_response}")
+                            logging.info(f"Server response: {decompressed_response}")
+                            return True, response
+                        else:
+                            socketio_logger.error("[CLIENT] No response received from server")
+                            logging.error("No response received from server")
+                            break
+                    else:
+                        socketio_logger.warning(f"[SESSION] Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
+                        logging.warning(f"Failed to send request or achieve READY state. Attempt {attempt + 1} of {config.RETRY_COUNT}")
+                        if attempt < config.RETRY_COUNT - 1:
+                            time.sleep(config.ACK_TIMEOUT)
+                else:
+                    socketio_logger.error("[CLIENT] Failed to send request after all retry attempts")
+                    logging.error("Failed to send request after all retry attempts")
+
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] An error occurred during request: {e}")
             logging.error(f"An error occurred during request: {e}")
@@ -142,44 +246,84 @@ class Client:
         
     def connect_and_send_note(self, server_callsign, note):
         if not self.session or self.session.state == ModemState.DISCONNECTED:
+            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+            
             self.session = self.core.connect(server_callsign)
             if not self.session:
-                socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign[0]}-{server_callsign[1]}")
+                socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False
-
-        self.session.is_note_writing = True
+            
+            # Log connection
+            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
+        
         try:
             socketio_logger.info("[CLIENT] Sending note")
             logging.info("Sending note")
-            if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
-                socketio_logger.error("Failed to establish READY state")
-                logging.error("Failed to establish READY state")
-                return False
-
-            if not self.core.send_note(self.session, note):
-                socketio_logger.error("[SYSTEM] Failed to send note")
-                logging.error("Failed to send note")
-                return False
-
-            logging.info("Waiting for DONE_ACK")
-            response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
-            if response:
-                socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
-                logging.info("Received DONE_ACK, note transmission complete")
-                return True
+            
+            # Route through protocol layer if available
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                socketio_logger.info("[CLIENT] Using protocol layer for note")
+                
+                note_data = {'type': 'NOTE', 'content': note}
+                success = self.core.protocol_manager.send_nostr_request(self.session, note_data)
+                
+                if success:
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
+                    if response and response.get('success'):
+                        socketio_logger.info("[CLIENT] Note Published!")
+                        
+                        protocol = self.core.protocol_manager
+                        
+                        # Send DONE
+                        socketio_logger.info("[CONTROL] Sending DONE")
+                        protocol.send_control_message(self.session, 'DONE')
+                        
+                        # Wait for DONE_ACK
+                        socketio_logger.info("[CONTROL] Waiting for DONE_ACK")
+                        done_ack = protocol.receive_nostr_response(self.session, timeout=15)
+                        if done_ack and done_ack.get('type') == 'DONE_ACK':
+                            socketio_logger.info("[CONTROL] Received DONE_ACK")
+                        else:
+                            socketio_logger.warning("[CONTROL] No DONE_ACK received")
+                        
+                        time.sleep(1)  # Brief pause
+                        
+                        # Send DISCONNECT (don't wait for ACK - connection will close)
+                        socketio_logger.info("[CONTROL] Sending DISCONNECT")
+                        protocol.send_control_message(self.session, 'DISCONNECT')
+                        socketio_logger.info("[CONTROL] Disconnect signal sent")
+                        
+                        time.sleep(2)  # Give it time to transmit
+                        return True
+                    else:
+                        socketio_logger.error("[CLIENT] Failed to publish note")
+                        return False
+                else:
+                    return False
+            
             else:
-                socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
-                logging.error("Failed to receive DONE_ACK")
-                return False
-
+                # FALLBACK: Old packet system (before protocol manager was added)
+                if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
+                    socketio_logger.error("Failed to establish READY state")
+                    return False
+                if not self.core.send_note(self.session, note):
+                    socketio_logger.error("[SYSTEM] Failed to send note")
+                    return False
+                response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
+                if response:
+                    socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
+                    return True
+                else:
+                    socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
+                    return False
+        
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] An error occurred during note sending: {e}")
             logging.error(f"An error occurred during note sending: {e}")
             return False
         finally:
-            self.session.is_note_writing = False
-            if self.session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
+            if self.session and self.session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
                 self.disconnect()
 
     def handle_missing_packets(self, session, missing_packets_message):
@@ -222,6 +366,16 @@ class Client:
         socketio_logger.info("[SESSION] Client initiating disconnect [CLIENT_DISCONNECT]")
         logging.info("Client initiating disconnect [CLIENT_DISCONNECT]")
         if self.session and self.session.state != ModemState.DISCONNECTED:
+            # Check if using DirectProtocol - use direct disconnect
+            if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+                if self.core.protocol_manager.get_protocol_type() == 'DirectProtocol':
+                    self.core.backend_manager.disconnect(self.session)
+                    self.session = None
+                    socketio_logger.info("[SYSTEM] Client disconnect complete [CLIENT_DISCONNECT_COMPLETE]")
+                    logging.info("Client disconnect complete [CLIENT_DISCONNECT_COMPLETE]")
+                    return
+            
+            # Packet protocol disconnect
             if self.core.send_disconnect(self.session):
                 if self.core.wait_for_ack(self.session, timeout=config.DISCONNECT_TIMEOUT):
                     socketio_logger.info("[CLIENT] Disconnect acknowledged by server")

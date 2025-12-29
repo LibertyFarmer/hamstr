@@ -154,13 +154,19 @@
   onMount(() => {
     // Listen for interaction updates
     const handleInteractionUpdate = (event) => {
-      const { noteId, interactionType } = event.detail;
+      const { noteId, interactionType, zapAmount } = event.detail;
       if (note.id === noteId) {
         // Update the note object in real-time
         note[interactionType] = true;
+        
+        // NEW: If it's a zap, update the amount
+        if (interactionType === 'zapped' && zapAmount) {
+          note.zap_amount = (note.zap_amount || 0) + zapAmount;
+        }
+        
         // Trigger Svelte reactivity
         note = note;
-        console.log(`Note ${noteId} marked as ${interactionType}`);
+        console.log(`Note ${noteId} marked as ${interactionType}${zapAmount ? ` with ${zapAmount} sats` : ''}`);
       }
     };
     
@@ -327,7 +333,9 @@
           {/if}
         </div>
         <span class="hidden sm:inline text-sm sm:text-base font-bold">
-          {#if note.zapped}
+          {#if note.zapped && note.zap_amount > 0}
+            ⚡ {note.zap_amount}
+          {:else if note.zapped}
             ⚡ Zapped
           {:else}
             ⚡ Zap

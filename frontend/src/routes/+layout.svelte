@@ -226,17 +226,17 @@
   }
 }
 
-  async function handleSubmitZap(zapData) {
+async function handleSubmitZap(zapData) {
   try {
     console.log('Sending zap data:', zapData);
 
-    // NEW: Dispatch zap operation started event
+    // Dispatch zap operation started event
     window.dispatchEvent(new CustomEvent('zapOperationStarted'));
 
-    currentOperationLogs.set([]);
+    currentOperationLogs.set([]);  // Clear old logs at start - this is fine
     progressDrawerOpen = true;
     showZapModal = false;
-    isSending = true;  // Keep this as-is for existing functionality
+    isSending = true;
     
     // Track which note is being zapped
     const zapNoteId = zapData.note_id;
@@ -256,11 +256,40 @@
     }
 
     if (result.success) {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // DON'T clear logs or close drawer here - zap is still running!
+      console.log('Zap API call succeeded, operation continuing in background...');
+      
+      // Wait for the ZAP_PUBLISHED message in the logs
+      const waitForZapComplete = new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+          const logs = $currentOperationLogs;
+          const zapPublished = logs.some(log => 
+            log.message.includes('ZAP_PUBLISHED') || 
+            log.message.includes('Zap live on NOSTR') ||
+            log.message.includes('Zap completed successfully')
+          );
+          
+          if (zapPublished) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+        
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          console.warn('Zap completion timeout - closing drawer anyway');
+          resolve();
+        }, 15000);
+      });
+      
+      await waitForZapComplete;
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // NOW we can clear and close
       currentOperationLogs.set([]);
       progressDrawerOpen = false;
       
-      // NEW: Update database to mark note as zapped
+      // Update database to mark note as zapped
       if (zapNoteId) {
         console.log(`Updating zapped status for note ${zapNoteId}`);
         try {
@@ -269,15 +298,18 @@
             headers: {
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ type: 'zapped' })
+            body: JSON.stringify({ 
+              type: 'zapped',
+              amount: zapData.amount_sats
+            })
           });
           
           if (updateResponse.ok) {
-            // Dispatch event to update UI immediately
             window.dispatchEvent(new CustomEvent('noteInteractionUpdated', {
               detail: { 
                 noteId: zapNoteId, 
-                interactionType: 'zapped' 
+                interactionType: 'zapped',
+                zapAmount: zapData.amount_sats
               }
             }));
             
@@ -287,7 +319,6 @@
           }
         } catch (dbError) {
           console.error('Error updating zap status in database:', dbError);
-          // Don't fail the whole operation for this
         }
       }
       
@@ -306,12 +337,11 @@
     toastType = 'error';
 
   } finally {
-    // NEW: Dispatch zap operation ended event
     window.dispatchEvent(new CustomEvent('zapOperationEnded'));
     
-    isSending = false;  // Keep this as-is
+    isSending = false;
     showToast = true;
-    currentOperationLogs.set([]);
+    // DON'T clear logs here - already cleared in success block
     setTimeout(() => {
       showToast = false;
     }, 3000);

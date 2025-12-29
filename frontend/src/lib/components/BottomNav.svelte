@@ -49,9 +49,11 @@
       console.log('Zap operation ended - back to normal indicator');
     });
     
-    window.bottomNavComponent = {
-      handleRequestNotes
-    };
+window.bottomNavComponent = {
+  handleRequestNotes,
+  set progressDrawerOpen(value) { progressDrawerOpen = value; },
+  get progressDrawerOpen() { return progressDrawerOpen; }
+};
 
     return () => {
       window.removeEventListener('requestTypeSelected', handleRequestTypeSelected);
@@ -100,12 +102,16 @@
     }
   }
 
-  function handleRequestTypeSelected(event) {
-    const { type } = event.detail;
-    dispatch('clearLogs');
-    progressDrawerOpen = true;
+function handleRequestTypeSelected(event) {
+  const { type } = event.detail;
+  dispatch('clearLogs');
+  progressDrawerOpen = true;
+  
+  // Wait for drawer to open and logs to clear before starting connection
+  setTimeout(() => {
     handleRequestNotes(type);
-  }
+  }, 200);
+}
 
   function goHome() {
     goto('/');

@@ -1,3 +1,4 @@
+# config.py - Updated to handle NETWORK section and backend settings
 import pathlib
 import configparser
 from typing import List
@@ -76,6 +77,37 @@ def update_config(section, option, value):
             config_to_update.set(section, option, str(value))
             with open(server_callsign_path, 'w') as f:
                 config_to_update.write(f)
+    elif section == 'NETWORK':
+        # NEW: Handle backend settings - route based on specific settings
+        if option == 'backend_type':
+            # Backend type goes to main settings.ini (shared setting)
+            main_config = configparser.ConfigParser()
+            main_config.read(config_path)
+            if not main_config.has_section('NETWORK'):
+                main_config.add_section('NETWORK')
+            main_config.set(section, option, str(value))
+            with open(config_path, 'w') as f:
+                main_config.write(f)
+        else:
+            # Other NETWORK settings might be client/server specific in the future
+            # For now, put them in main settings.ini
+            main_config = configparser.ConfigParser()
+            main_config.read(config_path)
+            if not main_config.has_section('NETWORK'):
+                main_config.add_section('NETWORK')
+            main_config.set(section, option, str(value))
+            with open(config_path, 'w') as f:
+                main_config.write(f)
+    elif section in ['VARA', 'RETICULUM', 'FLDIGI']:
+        # NEW: Handle backend-specific settings - go to main settings.ini for now
+        # Future: might split these between client/server configs
+        main_config = configparser.ConfigParser()
+        main_config.read(config_path)
+        if not main_config.has_section(section):
+            main_config.add_section(section)
+        main_config.set(section, option, str(value))
+        with open(config_path, 'w') as f:
+            main_config.write(f)
     elif section == 'NOSTR':
         if option == 'RELAYS':
             # Handle NOSTR RELAYS - route to server_settings.ini
@@ -104,7 +136,7 @@ def update_config(section, option, value):
             main_config.set(section, option, str(value))
             with open(config_path, 'w') as f:
                 main_config.write(f)
-    else:  # For main settings.ini only
+    else:  # For main settings.ini only (GENERAL, PTT, etc.)
         # Only read and update the main settings file
         main_config = configparser.ConfigParser()
         main_config.read(config_path)
@@ -138,6 +170,68 @@ def get_relay_list() -> List[str]:
             return [relay.strip() for relay in relay_string.split(',')]
         except:
             return []
+
+# EXISTING SETTINGS - All from [GENERAL] section
+MAX_PACKET_SIZE = config.getint('GENERAL', 'max_packet_size')
+SEND_RETRIES = config.getint('GENERAL', 'send_retries')
+RETRY_COUNT = SEND_RETRIES  # Add this line - alias for backward compatibility
+DISCONNECT_RETRY = config.getint('GENERAL', 'disconnect_retry')
+ACK_TIMEOUT = config.getint('GENERAL', 'ack_timeout')
+CONNECTION_TIMEOUT = config.getint('GENERAL', 'connection_timeout')
+CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'connection_attempt_timeout')
+KEEP_ALIVE_INTERVAL = config.getint('GENERAL', 'keep_alive_interval')
+KEEP_ALIVE_RETRY_INTERVAL = config.getint('GENERAL', 'keep_alive_retry_interval')
+KEEP_ALIVE_FINAL_INTERVAL = config.getint('GENERAL', 'keep_alive_final_interval')
+SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'shutdown_timeout')
+PACKET_SEND_DELAY = config.getfloat('GENERAL', 'packet_send_delay')
+DISCONNECT_TIMEOUT = config.getint('GENERAL', 'disconnect_timeout')
+MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'missing_packets_timeout')
+BAUD_RATE = config.getint('GENERAL', 'baud_rate')
+NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
+NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
+READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
+MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
+CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
+
+# Get NOSTR relays
+NOSTR_RELAYS = get_relay_list()
+
+# Load PTT-specific settings with default values if not found
+try:
+    PTT_TX_DELAY = config.getfloat('PTT', 'tx_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_TX_DELAY = 0.25  # Default TX delay in seconds
+
+try:
+    PTT_RX_DELAY = config.getfloat('PTT', 'rx_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_RX_DELAY = 0.25  # Default RX delay in seconds
+
+try:
+    PTT_TAIL = config.getfloat('PTT', 'ptt_tail')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_TAIL = 0.1  # Default PTT tail in seconds
+
+try:
+    PTT_ACK_SPACING = config.getfloat('PTT', 'ack_spacing')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PTT_ACK_SPACING = 0.5  # Default ACK spacing in seconds
+
+# Add fallback values for any settings that may be missing
+try:
+    CONNECT_ACK_TIMEOUT = config.getint('GENERAL', 'connect_ack_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    CONNECT_ACK_TIMEOUT = ACK_TIMEOUT  # Use ACK_TIMEOUT as fallback
+
+try:
+    MESSAGE_REQUEST_BUFFER = config.getint('GENERAL', 'message_request_buffer')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    MESSAGE_REQUEST_BUFFER = 5  # Default buffer
+
+try:
+    PACKET_RESEND_DELAY = config.getfloat('GENERAL', 'packet_resend_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PACKET_RESEND_DELAY = 0.3  # Default resend delay
 
 # Force reload client config to get latest values
 client_config.read([config_path, client_callsign_path])
@@ -204,75 +298,77 @@ except:
 try:
     SERVER_HOST = server_config.get('TNC','SERVER_HOST')
 except:
-    SERVER_HOST = config.get('TNC','SERVER_HOST', fallback='localhost')
+    SERVER_HOST = config.get('TNC','server_host', fallback='localhost')
 
 try:
-    SERVER_PORT = server_config.getint('TNC', 'SERVER_PORT')
+    SERVER_PORT = server_config.getint('TNC','SERVER_PORT')
 except:
-    SERVER_PORT = config.getint('TNC', 'SERVER_PORT', fallback=8002)
+    SERVER_PORT = config.getint('TNC','server_port', fallback=8002)
 
 try:
     S_CALLSIGN = parse_tuple(server_config.get('RADIO','SERVER_CALLSIGN'))
 except:
-    S_CALLSIGN = parse_tuple(config.get('RADIO','SERVER_CALLSIGN', fallback='(SERVER, 0)'))
+    S_CALLSIGN = parse_tuple(config.get('RADIO','server_callsign', fallback='(SERVER, 0)'))
 
-# Shared settings from main config
-RETRY_COUNT = config.getint('GENERAL','send_retries')
-DISCONNECT_RETRY = config.getint('GENERAL', 'disconnect_retry')
-ACK_TIMEOUT = config.getint('GENERAL','ack_timeout')
-MAX_PACKET_SIZE = config.getint('GENERAL','max_packet_size')
-CONNECTION_TIMEOUT = config.getint('GENERAL','connection_timeout')
-KEEP_ALIVE_INTERVAL = config.getint('GENERAL','keep_alive_interval')
-KEEP_ALIVE_RETRY_INTERVAL = config.getint('GENERAL','keep_alive_retry_interval')
-KEEP_ALIVE_FINAL_INTERVAL = config.getint('GENERAL','keep_alive_final_interval')
-CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'connection_attempt_timeout')
-SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'shutdown_timeout')
-PACKET_SEND_DELAY = config.getfloat('GENERAL', 'packet_send_delay')
-DISCONNECT_TIMEOUT = config.getint('GENERAL', 'disconnect_timeout')
-MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'missing_packets_timeout')
-BAUD_RATE = config.getint('GENERAL', 'baud_rate')
-NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
-NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
-READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
-MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
-CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
-
-# Get NOSTR relays
-NOSTR_RELAYS = get_relay_list()
-
-# Load PTT-specific settings with default values if not found
+# NEW: Backend system configuration
 try:
-    PTT_TX_DELAY = config.getfloat('PTT', 'tx_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_TX_DELAY = 0.25  # Default TX delay in seconds
+    # Try client config first, then server config, then main config
+    BACKEND_TYPE = None
+    if hasattr(client_config, 'has_section') and client_config.has_section('NETWORK'):
+        BACKEND_TYPE = client_config.get('NETWORK', 'backend_type', fallback=None)
+    
+    if not BACKEND_TYPE and hasattr(server_config, 'has_section') and server_config.has_section('NETWORK'):
+        BACKEND_TYPE = server_config.get('NETWORK', 'backend_type', fallback=None)
+    
+    if not BACKEND_TYPE:
+        BACKEND_TYPE = config.get('NETWORK', 'backend_type', fallback='legacy')
+        
+except:
+    BACKEND_TYPE = 'legacy'  # Safe default
 
+# NEW: VARA settings (with safe defaults)
 try:
-    PTT_RX_DELAY = config.getfloat('PTT', 'rx_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_RX_DELAY = 0.25  # Default RX delay in seconds
+    VARA_BANDWIDTH = config.getint('VARA', 'bandwidth', fallback=2300)
+    VARA_ARQ_TIMEOUT = config.getint('VARA', 'arq_timeout', fallback=60)
+    VARA_CHAT_MODE = config.get('VARA', 'chat_mode', fallback='ON')
+    VARA_CONNECTION_TIMEOUT = config.getint('VARA', 'connection_timeout', fallback=30)
+except:
+    # Fallback values if VARA section doesn't exist
+    VARA_BANDWIDTH = 2300
+    VARA_ARQ_TIMEOUT = 60
+    VARA_CHAT_MODE = 'ON'
+    VARA_CONNECTION_TIMEOUT = 30
 
+# NEW: Reticulum settings (with safe defaults)
 try:
-    PTT_TAIL = config.getfloat('PTT', 'ptt_tail')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_TAIL = 0.1  # Default PTT tail in seconds
+    RETICULUM_INTERFACE_TYPE = config.get('RETICULUM', 'interface_type', fallback='kiss')
+    RETICULUM_KISS_PORT = config.getint('RETICULUM', 'kiss_port', fallback=7300)
+    RETICULUM_KISS_HOST = config.get('RETICULUM', 'kiss_host', fallback='localhost')
+    RETICULUM_CONFIG_PATH = config.get('RETICULUM', 'reticulum_config_path', fallback='~/.reticulum')
+    RETICULUM_ANNOUNCE_INTERVAL = config.getint('RETICULUM', 'announce_interval', fallback=300)
+    RETICULUM_HOP_COUNT = config.getint('RETICULUM', 'hop_count', fallback=4)
+    RETICULUM_IDENTITY_FILE = config.get('RETICULUM', 'identity_file', fallback='reticulum_identity')
+except:
+    # Fallback values if RETICULUM section doesn't exist
+    RETICULUM_INTERFACE_TYPE = 'kiss'
+    RETICULUM_KISS_PORT = 7300
+    RETICULUM_KISS_HOST = 'localhost'
+    RETICULUM_CONFIG_PATH = '~/.reticulum'
+    RETICULUM_ANNOUNCE_INTERVAL = 300
+    RETICULUM_HOP_COUNT = 4
+    RETICULUM_IDENTITY_FILE = 'reticulum_identity'
 
+# NEW: FLDIGI settings (with safe defaults)
 try:
-    PTT_ACK_SPACING = config.getfloat('PTT', 'ack_spacing')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_ACK_SPACING = 0.5  # Default ACK spacing in seconds
-
-# Add fallback values for any settings that may be missing
-try:
-    CONNECT_ACK_TIMEOUT = config.getint('GENERAL', 'connect_ack_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    CONNECT_ACK_TIMEOUT = ACK_TIMEOUT  # Use ACK_TIMEOUT as fallback
-
-try:
-    MESSAGE_REQUEST_BUFFER = config.getint('GENERAL', 'message_request_buffer')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    MESSAGE_REQUEST_BUFFER = 5  # Default buffer
-
-try:
-    PACKET_RESEND_DELAY = config.getfloat('GENERAL', 'packet_resend_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PACKET_RESEND_DELAY = 0.3  # Default resend delay
+    FLDIGI_KISS_PORT = config.getint('FLDIGI', 'kiss_port', fallback=7342)
+    FLDIGI_MODE = config.get('FLDIGI', 'mode', fallback='psk31')
+    FLDIGI_ARQ_ENABLED = config.getboolean('FLDIGI', 'arq_enabled', fallback=False)
+    FLDIGI_TIMING_MULTIPLIER = config.getfloat('FLDIGI', 'timing_multiplier', fallback=2.0)
+    FLDIGI_CONNECTION_TIMEOUT = config.getint('FLDIGI', 'connection_timeout', fallback=45)
+except:
+    # Fallback values if FLDIGI section doesn't exist
+    FLDIGI_KISS_PORT = 7342
+    FLDIGI_MODE = 'psk31'
+    FLDIGI_ARQ_ENABLED = False
+    FLDIGI_TIMING_MULTIPLIER = 2.0
+    FLDIGI_CONNECTION_TIMEOUT = 45

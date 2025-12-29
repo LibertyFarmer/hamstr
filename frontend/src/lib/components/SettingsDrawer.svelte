@@ -138,7 +138,7 @@
         {#if currentView === 'menu'}
           <div class="text-center mt-4">
             <a href="/logs" class="text-blue-500 hover:underline text-sm" on:click={closeDrawer}>LOGS</a>
-            <p class="text-xs text-gray-500 mt-2">HAMSTR Version 0.00000021</p>
+            <p class="text-xs text-gray-500 mt-2">HAMSTR Version 0.00002100</p>
           </div>
         {/if}
       </div>
