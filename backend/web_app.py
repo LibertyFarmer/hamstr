@@ -1221,12 +1221,18 @@ def send_zap():
             try:
                 client = Client(BASE_DIR)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
-                
+
+                # Log connection attempt
+                socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+
                 session = client.core.connect(server_callsign)
                 if not session:
                     socketio_logger.error("[CLIENT] Failed to connect to server")
                     result_container[0] = {"success": False, "message": "Failed to connect to server"}
                     return
+
+                # Log successful connection
+                socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
                 
                 # Detect protocol type
                 protocol_type = 'PacketProtocol'  # Default

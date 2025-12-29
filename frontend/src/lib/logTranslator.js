@@ -52,6 +52,8 @@ const logTranslations = {
   '\\[CONTROL\\] Sending DONE': 'Finalizing transmission...',
   '\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
   '\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
+  '\\[CONTROL\\] Sending response': 'Sending data...',
+  '\\[CLIENT\\] Using DirectProtocol for zap': 'Preparing zap via VARA...',
   
   // Request Types - DirectProtocol
   '\\[CONTROL\\] Sending 1 request': 'Fetching notes from followed accounts...',
