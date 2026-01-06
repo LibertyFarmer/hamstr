@@ -171,32 +171,103 @@ def get_relay_list() -> List[str]:
         except:
             return []
 
-# EXISTING SETTINGS - All from [GENERAL] section
-MAX_PACKET_SIZE = config.getint('GENERAL', 'max_packet_size')
-SEND_RETRIES = config.getint('GENERAL', 'send_retries')
-RETRY_COUNT = SEND_RETRIES  # Add this line - alias for backward compatibility
-DISCONNECT_RETRY = config.getint('GENERAL', 'disconnect_retry')
-ACK_TIMEOUT = config.getint('GENERAL', 'ack_timeout')
-CONNECTION_TIMEOUT = config.getint('GENERAL', 'connection_timeout')
-CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'connection_attempt_timeout')
-KEEP_ALIVE_INTERVAL = config.getint('GENERAL', 'keep_alive_interval')
-KEEP_ALIVE_RETRY_INTERVAL = config.getint('GENERAL', 'keep_alive_retry_interval')
-KEEP_ALIVE_FINAL_INTERVAL = config.getint('GENERAL', 'keep_alive_final_interval')
-SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'shutdown_timeout')
-PACKET_SEND_DELAY = config.getfloat('GENERAL', 'packet_send_delay')
-DISCONNECT_TIMEOUT = config.getint('GENERAL', 'disconnect_timeout')
-MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'missing_packets_timeout')
-BAUD_RATE = config.getint('GENERAL', 'baud_rate')
-NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
-NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
-READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
-MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
-CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
+# General settings
+try:
+    SEND_RETRIES = config.getint('GENERAL', 'send_retries')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    SEND_RETRIES = 3  # Default retries
 
-# Get NOSTR relays
-NOSTR_RELAYS = get_relay_list()
+try:
+    DISCONNECT_RETRY = config.getint('GENERAL', 'disconnect_retry')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    DISCONNECT_RETRY = 1  # Default disconnect retry
 
-# Load PTT-specific settings with default values if not found
+try:
+    ACK_TIMEOUT = config.getint('GENERAL', 'ack_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    ACK_TIMEOUT = 15  # Default ACK timeout in seconds
+
+try:
+    MAX_PACKET_SIZE = config.getint('GENERAL', 'max_packet_size')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    MAX_PACKET_SIZE = 200  # Default max packet size in bytes
+
+try:
+    CONNECTION_TIMEOUT = config.getint('GENERAL', 'connection_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    CONNECTION_TIMEOUT = 95  # Default connection timeout in seconds
+
+try:
+    CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'connection_attempt_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    CONNECTION_ATTEMPT_TIMEOUT = 10  # Default connection attempt timeout in seconds
+
+try:
+    KEEP_ALIVE_INTERVAL = config.getint('GENERAL', 'keep_alive_interval')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    KEEP_ALIVE_INTERVAL = 20  # Default keep-alive interval in seconds
+
+try:
+    KEEP_ALIVE_RETRY_INTERVAL = config.getint('GENERAL', 'keep_alive_retry_interval')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    KEEP_ALIVE_RETRY_INTERVAL = 5  # Default keep-alive retry interval in seconds
+
+try:
+    KEEP_ALIVE_FINAL_INTERVAL = config.getint('GENERAL', 'keep_alive_final_interval')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    KEEP_ALIVE_FINAL_INTERVAL = 10  # Default final keep-alive interval in seconds
+
+try:
+    SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'shutdown_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    SHUTDOWN_TIMEOUT = 20  # Default shutdown timeout in seconds
+
+try:
+    PACKET_SEND_DELAY = config.getfloat('GENERAL', 'packet_send_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    PACKET_SEND_DELAY = 0.4  # Default packet send delay in seconds
+
+try:
+    DISCONNECT_TIMEOUT = config.getint('GENERAL', 'disconnect_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    DISCONNECT_TIMEOUT = 5  # Default disconnect timeout in seconds
+
+try:
+    MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'missing_packets_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    MISSING_PACKETS_TIMEOUT = 50  # Default missing packets timeout in seconds
+
+try:
+    BAUD_RATE = config.getint('GENERAL', 'baud_rate')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    BAUD_RATE = 300  # Default baud rate
+
+try:
+    NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    NO_ACK_TIMEOUT = 40  # Default no ACK timeout in seconds
+
+try:
+    NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    NO_PACKET_TIMEOUT = 50  # Default no packet timeout in seconds
+
+try:
+    MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    MISSING_PACKETS_THRESHOLD = 0.5  # Default missing packets threshold
+
+try:
+    READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    READY_TIMEOUT = 20  # Default READY timeout in seconds
+
+try:
+    CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    CONNECTION_STABILIZATION_DELAY = 1.0  # Default stabilization delay in seconds
+
+# PTT settings
 try:
     PTT_TX_DELAY = config.getfloat('PTT', 'tx_delay')
 except (configparser.NoSectionError, configparser.NoOptionError):
@@ -232,6 +303,12 @@ try:
     PACKET_RESEND_DELAY = config.getfloat('GENERAL', 'packet_resend_delay')
 except (configparser.NoSectionError, configparser.NoOptionError):
     PACKET_RESEND_DELAY = 0.3  # Default resend delay
+
+# Backward compatibility alias
+RETRY_COUNT = SEND_RETRIES
+
+# Get NOSTR relays
+NOSTR_RELAYS = get_relay_list()
 
 # Force reload client config to get latest values
 client_config.read([config_path, client_callsign_path])
@@ -332,12 +409,77 @@ try:
     VARA_ARQ_TIMEOUT = config.getint('VARA', 'arq_timeout', fallback=60)
     VARA_CHAT_MODE = config.get('VARA', 'chat_mode', fallback='ON')
     VARA_CONNECTION_TIMEOUT = config.getint('VARA', 'connection_timeout', fallback=30)
+    VARA_HOST = config.get('VARA', 'vara_host', fallback='127.0.0.1')
 except:
     # Fallback values if VARA section doesn't exist
     VARA_BANDWIDTH = 2300
     VARA_ARQ_TIMEOUT = 60
     VARA_CHAT_MODE = 'ON'
     VARA_CONNECTION_TIMEOUT = 30
+    VARA_HOST = '127.0.0.1'
+
+# VARA PTT settings - SEPARATE for client and server
+# Client PTT settings
+try:
+    CLIENT_VARA_USE_PTT = client_config.getboolean('VARA', 'use_ptt', fallback=True)
+except:
+    CLIENT_VARA_USE_PTT = True
+
+try:
+    CLIENT_VARA_PTT_SERIAL_PORT = client_config.get('VARA', 'ptt_serial_port', fallback='COM10')
+except:
+    CLIENT_VARA_PTT_SERIAL_PORT = 'COM10'
+
+try:
+    CLIENT_VARA_PTT_SERIAL_BAUD = client_config.getint('VARA', 'ptt_serial_baud', fallback=38400)
+except:
+    CLIENT_VARA_PTT_SERIAL_BAUD = 38400
+
+try:
+    CLIENT_VARA_PTT_METHOD = client_config.get('VARA', 'ptt_method', fallback='BOTH')
+except:
+    CLIENT_VARA_PTT_METHOD = 'BOTH'
+
+try:
+    CLIENT_VARA_PRE_PTT_DELAY = client_config.getfloat('VARA', 'pre_ptt_delay', fallback=0.1)
+except:
+    CLIENT_VARA_PRE_PTT_DELAY = 0.1
+
+try:
+    CLIENT_VARA_POST_PTT_DELAY = client_config.getfloat('VARA', 'post_ptt_delay', fallback=0.1)
+except:
+    CLIENT_VARA_POST_PTT_DELAY = 0.1
+
+# Server PTT settings
+try:
+    SERVER_VARA_USE_PTT = server_config.getboolean('VARA', 'use_ptt', fallback=True)
+except:
+    SERVER_VARA_USE_PTT = True
+
+try:
+    SERVER_VARA_PTT_SERIAL_PORT = server_config.get('VARA', 'ptt_serial_port', fallback='COM11')
+except:
+    SERVER_VARA_PTT_SERIAL_PORT = 'COM11'
+
+try:
+    SERVER_VARA_PTT_SERIAL_BAUD = server_config.getint('VARA', 'ptt_serial_baud', fallback=38400)
+except:
+    SERVER_VARA_PTT_SERIAL_BAUD = 38400
+
+try:
+    SERVER_VARA_PTT_METHOD = server_config.get('VARA', 'ptt_method', fallback='BOTH')
+except:
+    SERVER_VARA_PTT_METHOD = 'BOTH'
+
+try:
+    SERVER_VARA_PRE_PTT_DELAY = server_config.getfloat('VARA', 'pre_ptt_delay', fallback=0.1)
+except:
+    SERVER_VARA_PRE_PTT_DELAY = 0.1
+
+try:
+    SERVER_VARA_POST_PTT_DELAY = server_config.getfloat('VARA', 'post_ptt_delay', fallback=0.1)
+except:
+    SERVER_VARA_POST_PTT_DELAY = 0.1
 
 # NEW: Reticulum settings (with safe defaults)
 try:

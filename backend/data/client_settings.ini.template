@@ -27,12 +27,21 @@ serial_speed = 57600
 # backend_type = legacy
 
 # VARA Client Settings (when using VARA backend)
+
 [VARA]
 # Client uses these ports to connect to local VARA instance
 command_port = 8300
 data_port = 8301
 # If running VARA on different host:
 # vara_host = localhost
+
+# PTT Configuration (REQUIRED for VARA HF!)
+use_ptt = true
+ptt_serial_port = COM11
+ptt_serial_baud = 38400
+ptt_method = BOTH
+pre_ptt_delay = 0.1
+post_ptt_delay = 0.1
 
 # Reticulum Client Settings (when using Reticulum backend)
 [RETICULUM]

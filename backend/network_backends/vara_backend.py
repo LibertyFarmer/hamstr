@@ -12,6 +12,7 @@ import threading
 import json
 from typing import Optional, Dict, Any, Tuple
 from .base_backend import NetworkBackend, BackendType, BackendStatus
+from ptt_controller import PTTController
 
 # Import logging
 from socketio_logger import get_socketio_logger
@@ -87,6 +88,9 @@ class VARABackend(NetworkBackend):
             config: Configuration module with VARA settings
             is_server: True if server instance, False for client
         """
+        logging.info(f"[VARA_BACKEND] __init__ called - is_server={is_server}")
+        import traceback
+        logging.info(f"[VARA_BACKEND] Called from:\n{''.join(traceback.format_stack())}")
         super().__init__(config, is_server)
         
         # Get VARA configuration
@@ -98,6 +102,48 @@ class VARABackend(NetworkBackend):
         # VARA connection state
         self._vara_ready = False
         self._listening_command_socket = None  # Keep command socket open for server
+        self._ptt_monitor_thread = None  # Background thread for PTT control
+        self._vara_messages = []  # Store all VARA messages
+        self._message_lock = threading.Lock()
+
+        # PTT INTEGRATION: Initialize PTT controller if enabled
+        self.ptt = None
+
+        # Choose appropriate PTT settings based on role
+        if self.is_server:
+            use_ptt = getattr(config, 'SERVER_VARA_USE_PTT', True)
+            ptt_port = getattr(config, 'SERVER_VARA_PTT_SERIAL_PORT', 'COM11')
+            ptt_baud = getattr(config, 'SERVER_VARA_PTT_SERIAL_BAUD', 38400)
+            ptt_method = getattr(config, 'SERVER_VARA_PTT_METHOD', 'BOTH')
+            pre_delay = getattr(config, 'SERVER_VARA_PRE_PTT_DELAY', 0.1)
+            post_delay = getattr(config, 'SERVER_VARA_POST_PTT_DELAY', 0.1)
+        else:
+            use_ptt = getattr(config, 'CLIENT_VARA_USE_PTT', True)
+            ptt_port = getattr(config, 'CLIENT_VARA_PTT_SERIAL_PORT', 'COM10')
+            ptt_baud = getattr(config, 'CLIENT_VARA_PTT_SERIAL_BAUD', 38400)
+            ptt_method = getattr(config, 'CLIENT_VARA_PTT_METHOD', 'BOTH')
+            pre_delay = getattr(config, 'CLIENT_VARA_PRE_PTT_DELAY', 0.1)
+            post_delay = getattr(config, 'CLIENT_VARA_POST_PTT_DELAY', 0.1)
+
+        if use_ptt:
+            try:
+                self.ptt = PTTController(
+                    port=ptt_port,
+                    baud=ptt_baud,
+                    method=ptt_method,
+                    pre_delay=pre_delay,
+                    post_delay=post_delay
+                )
+                if self.ptt.connect():
+                    logging.info(f"[VARA_BACKEND] PTT enabled on {ptt_port}")
+                else:
+                    logging.warning("[VARA_BACKEND] PTT enabled but connection failed")
+                    self.ptt = None
+            except Exception as e:
+                logging.error(f"[VARA_BACKEND] PTT initialization failed: {e}")
+                self.ptt = None
+        else:
+            logging.info("[VARA_BACKEND] PTT disabled - VARA FM or VOX mode")
         
         # Try to initialize VARA (non-fatal if VARA not running yet)
         self._initialize_vara()
@@ -108,7 +154,13 @@ class VARABackend(NetworkBackend):
             logging.info(f"[VARA_BACKEND] VARA not ready during init - will retry during first connection")
         
     def _initialize_vara(self):
-        """Initialize VARA with our callsign and basic settings"""
+        """
+        Initialize VARA with our callsign and basic settings.
+        
+        Sets up VARA modem configuration and establishes command socket.
+        For server instances, starts listening mode and PTT monitoring thread.
+        For client instances, just validates VARA is ready.
+        """
         try:
             # Parse our callsign
             local_call, local_ssid = self._parse_callsign(self.my_callsign)
@@ -144,19 +196,95 @@ class VARABackend(NetworkBackend):
                     # KEEP the command socket open for server listening
                     self._listening_command_socket = command_sock
                     self._vara_ready = True
+                    
+                    # Start PTT monitor thread for server
+                    if self.ptt:
+                        self._ptt_monitor_thread = threading.Thread(
+                            target=self._monitor_vara_ptt,
+                            daemon=True,
+                            name="VARA-PTT-Monitor"
+                        )
+                        self._ptt_monitor_thread.start()
+                        logging.info("[VARA_BACKEND] PTT monitor thread started")
                 else:
                     logging.warning("[VARA_BACKEND] Failed to start VARA listening")
                     command_sock.close()
             else:
-                # Client doesn't need persistent command socket
+                # Client doesn't need persistent command socket during init
                 logging.info(f"[VARA_BACKEND] Client VARA ready for connections")
                 self._vara_ready = True
-                command_sock.close()
+                command_sock.close()  # Close it, connect() will make fresh one
             
         except Exception as e:
             logging.info(f"[VARA_BACKEND] VARA not ready during initialization: {e}")
             logging.info(f"[VARA_BACKEND] Will attempt VARA setup during first connection")
             # Not fatal - VARA might not be running yet
+
+    def _monitor_vara_ptt(self):
+        """Monitor VARA - THE ONLY socket reader. Handles PTT and stores messages."""
+        logging.info("[VARA_PTT] Monitor thread starting")
+        
+        while self._vara_ready and self._listening_command_socket:
+            try:
+                self._listening_command_socket.settimeout(0.5)
+                data = self._listening_command_socket.recv(1024)
+                
+                if data:
+                    raw_msg = data.decode('ascii', errors='ignore').strip()
+                    logging.debug(f"[VARA_PTT] RAW: {raw_msg}")  # Changed to DEBUG
+                    
+                    for line in raw_msg.split('\r'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        logging.debug(f"[VARA_PTT] Message: {line}")  # Changed to DEBUG
+                        
+                        # Store message for other methods
+                        with self._message_lock:
+                            self._vara_messages.append(line)
+                        
+                        # Handle PTT - KEEP at INFO level (critical for operation)
+                        if line == 'PTT ON':
+                            logging.info("[VARA_PTT] *** PTT ON ***")
+                            socketio_logger.info("[CONTROL] ⚡ PTT ON")
+                            if self.ptt and not self.ptt.is_keyed:
+                                self.ptt.key()
+                        
+                        elif line == 'PTT OFF':
+                            logging.info("[VARA_PTT] *** PTT OFF ***")
+                            socketio_logger.info("[CONTROL] ⚡ PTT OFF")
+                            if self.ptt and self.ptt.is_keyed:
+                                self.ptt.unkey()
+                                
+            except socket.timeout:
+                continue
+            except (OSError, socket.error) as e:
+                # Socket closed - this is normal during shutdown
+                if not self._vara_ready:
+                    # Expected shutdown
+                    break
+                else:
+                    # Unexpected socket error
+                    logging.error(f"[VARA_PTT] Socket error: {e}")
+                    break
+            except Exception as e:
+                logging.error(f"[VARA_PTT] Unexpected error: {e}")
+                break
+        
+        logging.info("[VARA_PTT] Monitor stopped")
+
+    def _wait_for_vara_message(self, search_string: str, timeout: float = 30) -> bool:
+        """Wait for specific message from VARA via monitor thread."""
+        start = time.time()
+        while time.time() - start < timeout:
+            with self._message_lock:
+                for msg in self._vara_messages:
+                    if search_string in msg:
+                        self._vara_messages.clear()
+                        return True
+            time.sleep(0.1)
+        return False
         
     def _setup_vara_config(self, config):
         """Setup VARA configuration from config module"""
@@ -225,7 +353,29 @@ class VARABackend(NetworkBackend):
             return None
     
     def _parse_callsign(self, callsign_str: str) -> Tuple[str, int]:
-        """Parse callsign string to (call, ssid) tuple"""
+        """
+        Parse callsign string into callsign and SSID components.
+        
+        Handles multiple callsign formats commonly used in amateur radio:
+        - Tuple string format: "(CALL, SSID)" → ('CALL', SSID)
+        - AX.25 format: "CALL-SSID" → ('CALL', SSID)
+        - Plain callsign: "CALL" → ('CALL', 0)
+        
+        This utility ensures consistent callsign handling across VARA 
+        connections regardless of how callsigns are specified in config.
+        
+        Args:
+            callsign_str: Callsign in any supported format
+            
+        Returns:
+            Tuple of (callsign, ssid) where callsign is uppercase string
+            and ssid is integer (0-15 for AX.25 compliance)
+            
+        Examples:
+            "(KK7AHK, 7)" → ('KK7AHK', 7)
+            "KK7AHK-7" → ('KK7AHK', 7)
+            "KK7AHK" → ('KK7AHK', 0)
+        """
         try:
             # Clean up the string first - remove extra quotes
             clean_str = str(callsign_str).strip().strip("'\"")
@@ -255,9 +405,9 @@ class VARABackend(NetworkBackend):
                 pass
             return ('UNKNOWN', 0)
     
-    def connect(self, remote_callsign: tuple) -> Optional[VARASession]:
+    def connect(self, remote_callsign: tuple) -> Optional[object]:
         """
-        Establish VARA connection with remote station.
+        Establish connection to remote station.
         
         Args:
             remote_callsign: Tuple of (callsign, ssid)
@@ -321,14 +471,58 @@ class VARABackend(NetworkBackend):
                     raise Exception("Timeout waiting for client connection")
                     
             else:
-                # CLIENT: Create new command socket and connect
-                logging.info(f"[VARA_BACKEND] Connecting to VARA command port {self.vara_host}:{self.command_port}")
-                command_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                command_sock.connect((self.vara_host, self.command_port))
+                # CLIENT: Create new command socket and connect with retry logic
+                command_sock = None
+                max_retries = 3
+                retry_delay = 2
                 
-                # Setup VARA configuration
-                time.sleep(1)  # Let connection stabilize
+                for attempt in range(max_retries):
+                    try:
+                        logging.info(f"[VARA_BACKEND] Connecting to VARA command port {self.vara_host}:{self.command_port} (attempt {attempt+1}/{max_retries})")
+                        command_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        command_sock.settimeout(5)
+                        command_sock.connect((self.vara_host, self.command_port))
+                        logging.info("[VARA_BACKEND] Connected to VARA")
+                        break
+                    except (ConnectionRefusedError, socket.timeout) as e:
+                        if command_sock:
+                            try:
+                                command_sock.close()
+                            except:
+                                pass
+                            command_sock = None
+                        
+                        if attempt < max_retries - 1:
+                            logging.warning(f"[VARA_BACKEND] VARA not ready, retrying in {retry_delay}s... (Is VARA HF running?)")
+                            socketio_logger.warning(f"[CONTROL] VARA not ready, retrying in {retry_delay}s...")
+                            time.sleep(retry_delay)
+                        else:
+                            raise Exception("VARA HF not responding. Please start VARA HF and try again.")
                 
+                if not command_sock:
+                    raise Exception("Failed to connect to VARA HF")
+                
+                # START MONITOR IMMEDIATELY before any commands
+                if self.ptt:
+                    self._listening_command_socket = command_sock
+                    self._vara_ready = True
+                    with self._message_lock:
+                        self._vara_messages.clear()
+                    
+                    if not self._ptt_monitor_thread or not self._ptt_monitor_thread.is_alive():
+                        self._ptt_monitor_thread = threading.Thread(
+                            target=self._monitor_vara_ptt,
+                            daemon=True,
+                            name="VARA-PTT-Monitor-Client"
+                        )
+                        self._ptt_monitor_thread.start()
+                        logging.info("[VARA_PTT] Monitor started BEFORE connection")
+                
+                # Give VARA time to stabilize (especially if just started)
+                logging.info("[VARA_BACKEND] Waiting for VARA to stabilize...")
+                time.sleep(2)  # Increased from 1 to 2 seconds
+                
+                # Send VARA commands
                 if not self._send_vara_command(command_sock, f"MYCALL {local_call}-{local_ssid}"):
                     raise Exception("Failed to set MYCALL")
                     
@@ -343,27 +537,12 @@ class VARABackend(NetworkBackend):
                 if not self._send_vara_command(command_sock, connect_cmd):
                     raise Exception("Failed to send CONNECT command")
                 
-                # Wait for connection confirmation
+                # Wait for connection via monitor
                 logging.info(f"[VARA_BACKEND] Waiting for connection to {remote_call}-{remote_ssid}")
-                connected = False
-                start_time = time.time()
-                while time.time() - start_time < self.connection_timeout and not connected:
-                    try:
-                        command_sock.settimeout(2)
-                        data = command_sock.recv(1024)
-                        if data:
-                            messages = data.decode('ascii', errors='ignore').strip()
-                            for line in messages.split('\r'):
-                                line = line.strip()
-                                if line and line.startswith("CONNECTED"):
-                                    connected = True
-                                    logging.info(f"[VARA_BACKEND] Connected to {remote_call}-{remote_ssid}")
-                                    break
-                    except socket.timeout:
-                        continue
-                
-                if not connected:
+                if not self._wait_for_vara_message("CONNECTED", timeout=self.connection_timeout):
                     raise Exception(f"Failed to connect to {remote_call}-{remote_ssid}")
+                
+                logging.info(f"[VARA_BACKEND] Connected to {remote_call}-{remote_ssid}")
             
             # Both client and server: Connect to data port
             logging.info(f"[VARA_BACKEND] Connecting to data port {self.vara_host}:{self.data_port}")
@@ -392,18 +571,34 @@ class VARABackend(NetworkBackend):
             logging.error(f"[VARA_BACKEND] Connection failed: {e}")
             self._update_status(BackendStatus.ERROR)
             
-            # Cleanup on failure
+            # CLIENT ONLY: Stop monitor thread and cleanup
+            if not self.is_server:
+                # Stop monitor FIRST (prevents socket errors)
+                self._vara_ready = False
+                if self._ptt_monitor_thread and self._ptt_monitor_thread.is_alive():
+                    logging.info("[VARA_BACKEND] Stopping monitor thread...")
+                    self._ptt_monitor_thread.join(timeout=2)
+                
+                # Ensure PTT is off
+                if self.ptt and self.ptt.is_keyed:
+                    try:
+                        self.ptt.unkey()
+                    except:
+                        pass
+                
+                # Close sockets
+                if command_sock:
+                    try:
+                        self._send_vara_command(command_sock, "DISCONNECT")
+                        command_sock.close()
+                    except:
+                        pass
+                    self._listening_command_socket = None
+            
+            # Close data socket (both client and server)
             if data_sock:
                 try:
                     data_sock.close()
-                except:
-                    pass
-            
-            # Only close command socket if it's a client connection (not the server's listening socket)
-            if command_sock and not self.is_server:
-                try:
-                    self._send_vara_command(command_sock, "DISCONNECT")
-                    command_sock.close()
                 except:
                     pass
             
@@ -412,6 +607,9 @@ class VARABackend(NetworkBackend):
     def send_data(self, session: VARASession, data: bytes) -> bool:
         """
         Send data via VARA using KISS protocol.
+        
+        PTT is automatically controlled by the VARA monitor thread based on
+        BUSY status - no manual PTT control needed here.
         
         Args:
             session: Active VARA session
@@ -443,7 +641,7 @@ class VARABackend(NetworkBackend):
             socketio_logger.info(f"[CONTROL] Sending via VARA ({len(data)} bytes)")
             logging.debug(f"[VARA_BACKEND] Sending {len(data)} bytes payload, {len(kiss_frame)} bytes KISS frame")
             
-            # Send via VARA data port
+            # Send via VARA data port (PTT handled by monitor thread)
             session.data_socket.sendall(kiss_frame)
             session.update_activity()
             
@@ -643,39 +841,48 @@ class VARABackend(NetworkBackend):
             return False
     
     def _check_disconnection(self, session: VARASession) -> bool:
-        """
-        Check command socket for disconnection events.
-        Server uses listening socket, client uses session socket.
-        """
+        """Check for disconnection via monitor thread messages."""
         try:
-            # Server: check the listening socket, Client: check session socket
-            if self.is_server:
-                if not self._listening_command_socket:
-                    return True
-                check_socket = self._listening_command_socket
-            else:
-                if not session.command_socket:
-                    return True
-                check_socket = session.command_socket
-            
-            check_socket.settimeout(0.1)
-            cmd_data = check_socket.recv(1024)
-            if cmd_data:
-                status = cmd_data.decode('ascii', errors='ignore').strip()
-                for line in status.split('\r'):
-                    line = line.strip()
-                    if line and line.startswith("DISCONNECTED"):
-                        logging.info("[VARA_BACKEND] VARA disconnection detected")
+            with self._message_lock:
+                for msg in self._vara_messages:
+                    if "DISCONNECTED" in msg:
+                        logging.info("[VARA_BACKEND] Disconnection detected")
                         return True
-            return False
-        except socket.timeout:
             return False
         except Exception as e:
             logging.debug(f"[VARA_BACKEND] Disconnect check error: {e}")
-            return False  # Don't assume disconnected on error
+            return False
         
     def _restart_vara_listening(self):
-        """Restart VARA listening after session ends (server only)."""
+        """
+        Restart VARA listening mode after a session ends (server only).
+        
+        CRITICAL for server operation: After each client disconnects, VARA must
+        be reconfigured to accept new incoming connections. This method:
+        1. Closes the old command socket
+        2. Reconnects to VARA command port
+        3. Waits for VARA to confirm disconnect
+        4. Reconfigures VARA with callsign, bandwidth, and chat mode
+        5. Re-enables LISTEN mode for next client
+        
+        This ensures the server can handle multiple sequential connections
+        without requiring manual VARA restart or intervention.
+        
+        Client instances don't need this - they create fresh connections
+        for each transmission.
+        
+        Returns:
+            True if restart successful, False on failure
+            
+        Side Effects:
+            - Updates self._listening_command_socket with new socket
+            - Sets self._vara_ready to True on success
+            - Logs detailed status at each step
+            
+        Note:
+            Failure here means server cannot accept new connections until
+            VARA is manually restarted or the backend is reinitialized.
+        """
         if not self.is_server:
             return
         
@@ -735,60 +942,75 @@ class VARABackend(NetworkBackend):
             return False
     
     def disconnect(self, session: VARASession) -> bool:
-        """Disconnect session and clean up sockets."""
-        logging.info(f"[VARA_BACKEND] disconnect() called for {session.remote_callsign}")
-        try:
-            session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
+            """
+            Disconnect session and clean up sockets with PTT control.
             
-            # Close data socket
-            if session.data_socket:
-                try:
-                    session.data_socket.close()
-                    logging.info("[VARA_BACKEND] Data socket closed")
-                except:
-                    pass
-                session.data_socket = None
-            
-            # CRITICAL: For server, DON'T close command socket - it's the listening socket!
-            # For client, close the session's command socket
-            if not self.is_server and session.command_socket:
-                try:
-                    session.command_socket.close()
-                    logging.info("[VARA_BACKEND] Client command socket closed")
-                except:
-                    pass
-                session.command_socket = None
-            else:
-                # Server: Just null out the session reference
-                session.command_socket = None
-                logging.info("[VARA_BACKEND] Server session ended, listening socket will be restarted")
-            
-            # Clear buffers
-            if hasattr(self, '_receive_buffers') and session_key in self._receive_buffers:
-                del self._receive_buffers[session_key]
-            if hasattr(self, '_json_buffers') and session_key in self._json_buffers:
-                del self._json_buffers[session_key]
-            
-            # Remove from active sessions
-            if session_key in self._active_sessions:
-                del self._active_sessions[session_key]
-            
-            session.connected = False
-            self._update_status(BackendStatus.DISCONNECTED)
-            
-            # Server: Restart VARA listening for next connection
-            if self.is_server:
-                self._restart_vara_listening()
-            
-            logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign}")
-            return True
-            
-        except Exception as e:
-            logging.error(f"[VARA_BACKEND] Disconnect error: {e}")
-            return False
+            Args:
+                session: VARASession to disconnect
+                
+            Returns:
+                True if successful, False otherwise
+            """
+            logging.info(f"[VARA_BACKEND] disconnect() called for {session.remote_callsign}")
+            try:
+                session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
+                
+                # PTT INTEGRATION: Ensure PTT is off before disconnect
+                if self.ptt:
+                    try:
+                        self.ptt.unkey()
+                    except:
+                        pass
+                
+                # Close data socket
+                if session.data_socket:
+                    try:
+                        session.data_socket.close()
+                        logging.info("[VARA_BACKEND] Data socket closed")
+                    except:
+                        pass
+                    session.data_socket = None
+                
+                # CRITICAL: For server, DON'T close command socket - it's the listening socket!
+                # For client, close the session's command socket
+                if not self.is_server and session.command_socket:
+                    try:
+                        session.command_socket.close()
+                        logging.info("[VARA_BACKEND] Client command socket closed")
+                    except:
+                        pass
+                    session.command_socket = None
+                else:
+                    # Server: Just null out the session reference
+                    session.command_socket = None
+                    logging.info("[VARA_BACKEND] Server session ended, listening socket will be restarted")
+                
+                # Clear buffers
+                if hasattr(self, '_receive_buffers') and session_key in self._receive_buffers:
+                    del self._receive_buffers[session_key]
+                if hasattr(self, '_json_buffers') and session_key in self._json_buffers:
+                    del self._json_buffers[session_key]
+                
+                # Remove from active sessions
+                if session_key in self._active_sessions:
+                    del self._active_sessions[session_key]
+                
+                session.connected = False
+                self._update_status(BackendStatus.DISCONNECTED)
+                
+                # Server: Restart VARA listening for next connection
+                if self.is_server:
+                    self._restart_vara_listening()
+                
+                logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign}")
+                return True
+                
+            except Exception as e:
+                logging.error(f"[VARA_BACKEND] Disconnect error: {e}")
+                return False
         
     def cleanup(self):
-       
+        """Clean up all VARA resources including PTT controller."""
         try:
             logging.info("[VARA_BACKEND] Cleanup started")
             
@@ -817,6 +1039,22 @@ class VARABackend(NetworkBackend):
                     self._listening_command_socket = None
                     self._vara_ready = False
             
+            # Stop PTT monitor thread
+            if self._ptt_monitor_thread and self._ptt_monitor_thread.is_alive():
+                logging.info("[VARA_BACKEND] Stopping PTT monitor thread")
+                # Thread will stop when _vara_ready becomes False (above)
+                self._ptt_monitor_thread.join(timeout=2)
+            
+            # PTT INTEGRATION: Clean up PTT controller
+            if self.ptt:
+                try:
+                    self.ptt.disconnect()
+                    logging.info("[VARA_BACKEND] PTT controller disconnected")
+                except Exception as e:
+                    logging.error(f"[VARA_BACKEND] PTT cleanup error: {e}")
+                finally:
+                    self.ptt = None
+            
             # Clear session tracking
             self._active_sessions.clear()
             self._update_status(BackendStatus.DISCONNECTED)
@@ -825,6 +1063,7 @@ class VARABackend(NetworkBackend):
             
         except Exception as e:
             logging.error(f"[VARA_BACKEND] Cleanup error: {e}")
+
     
     def is_connected(self, session: VARASession) -> bool:
         """
