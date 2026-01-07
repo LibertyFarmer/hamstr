@@ -15,19 +15,20 @@ let logContainer;
 let translatedMessages = [];
 let progress = 0;
 let connectionStatus = 'DISCONNECTED';
+let pttStatus = 'RX';  // NEW: PTT status (RX or TX)
 
 $: if (hidden) {
- dispatch('drawerClosed');
+  dispatch('drawerClosed');
 }
 
 function formatTime(timestamp) {
- return timestamp.split(' ')[1];
+  return timestamp.split(' ')[1];
 }
 
 function scrollToTop() {
- if (logContainer) {
-   logContainer.scrollTop = 0;
- }
+  if (logContainer) {
+    logContainer.scrollTop = 0;
+  }
 }
 
 $: logs = $currentOperationLogs || [];
@@ -98,7 +99,6 @@ $: varaProgress = logs.reduce((currentProgress, log) => {
   if (msg.includes('[CONTROL] Sent DONE')) newProgress = Math.max(newProgress, 95);
   if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
   
-  
   return newProgress;
 }, 0);
 
@@ -108,60 +108,73 @@ $: isVARA = logs.some(log => log.message.includes('VARA'));
 // Use appropriate progress based on protocol
 $: progress = isVARA ? varaProgress : (packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0);
 
+// NEW: PTT Status detection
+$: pttStatus = logs.reduce((status, log) => {
+  const msg = log.message;
+  if (msg.includes('[CONTROL] ⚡ PTT ON')) return 'TX';
+  if (msg.includes('[CONTROL] ⚡ PTT OFF')) return 'RX';
+  return status;
+}, 'RX');
+
 $: connectionStatus = logs.reduce((status, log) => {
- const msg = log.message;
- // VARA connections
- if (msg.includes('[PACKET] CONNECTING to') && msg.includes('VARA')) return 'CONNECTING';
- if (msg.includes('[SESSION] CONNECTED via VARA')) return 'CONNECTED';
- if (msg.includes('[CONTROL] Waiting for DISCONNECT from server')) return 'DISCONNECTING';
- // Packet protocol connections
- if (msg.includes('[SESSION] CONNECTED to')) return 'CONNECTED';
- if (msg.includes('Sending CONNECTION REQUEST')) return 'CONNECTING';
- if (msg.includes('[SESSION] Client initiating disconnect')) return 'DISCONNECTING';
- if (msg.includes('[SESSION] Client disconnect complete')) return 'DISCONNECTED';
- // VARA disconnecting
- if (msg.includes('[SESSION] Disconnecting session:')) return 'DISCONNECTING';
- return status;
+  const msg = log.message;
+  // VARA connections
+  if (msg.includes('[PACKET] CONNECTING to') && msg.includes('VARA')) return 'CONNECTING';
+  if (msg.includes('[SESSION] CONNECTED via VARA')) return 'CONNECTED';
+  if (msg.includes('[CONTROL] Waiting for DISCONNECT from server')) return 'DISCONNECTING';
+  // Packet protocol connections
+  if (msg.includes('[SESSION] CONNECTED to')) return 'CONNECTED';
+  if (msg.includes('Sending CONNECTION REQUEST')) return 'CONNECTING';
+  if (msg.includes('[SESSION] Client initiating disconnect')) return 'DISCONNECTING';
+  if (msg.includes('[SESSION] Client disconnect complete')) return 'DISCONNECTED';
+  // VARA disconnecting
+  if (msg.includes('[SESSION] Disconnecting session:')) return 'DISCONNECTING';
+  return status;
 }, 'DISCONNECTED');
 
 $: if (logs.length > 0) {
- const newLog = logs[logs.length - 1];
- if (newLog) {
-   translatedMessages = [
-     {
-       translatedMessage: translateLog(newLog.message),
-       shortTime: formatTime(newLog.timestamp)
-     },
-     ...translatedMessages
-   ];
-   setTimeout(scrollToTop, 0);
- }
+  const newLog = logs[logs.length - 1];
+  if (newLog) {
+    const translatedMessage = translateLog(newLog.message);
+    // Skip messages that return null (PTT messages)
+    if (translatedMessage !== null) {
+      translatedMessages = [
+        {
+          translatedMessage: translatedMessage,
+          shortTime: formatTime(newLog.timestamp)
+        },
+        ...translatedMessages
+      ];
+      setTimeout(scrollToTop, 0);
+    }
+  }
 }
 
 function closeDrawer() {
- console.log('Closing drawer, maintaining current state');
- hidden = true;
- dispatch('drawerClosed');
+  console.log('Closing drawer, maintaining current state');
+  hidden = true;
+  dispatch('drawerClosed');
 }
 
 onMount(() => {
- const handleClearLogs = () => {
-   console.log('Clearing translated messages');
-   translatedMessages = [];
-   progress = 0;
-   connectionStatus = 'DISCONNECTED';
- };
+  const handleClearLogs = () => {
+    console.log('Clearing translated messages');
+    translatedMessages = [];
+    progress = 0;
+    connectionStatus = 'DISCONNECTED';
+    pttStatus = 'RX';  // NEW: Reset PTT status
+  };
 
- window.addEventListener('clearLogs', handleClearLogs);
- window.addEventListener('clearProgressLogs', handleClearLogs);
+  window.addEventListener('clearLogs', handleClearLogs);
+  window.addEventListener('clearProgressLogs', handleClearLogs);
 
- return () => {
-   console.log('ProgressDrawer unmounting');
-   window.removeEventListener('clearLogs', handleClearLogs);
-   window.removeEventListener('clearProgressLogs', handleClearLogs);
-   translatedMessages = [];
-   clearOperationLogs();
- };
+  return () => {
+    console.log('ProgressDrawer unmounting');
+    window.removeEventListener('clearLogs', handleClearLogs);
+    window.removeEventListener('clearProgressLogs', handleClearLogs);
+    translatedMessages = [];
+    clearOperationLogs();
+  };
 });
 </script>
 
@@ -184,8 +197,8 @@ onMount(() => {
       </Button>
     </div>
 
-    <!-- Status Section -->
-    <div class="grid grid-cols-2 gap-4">
+    <!-- Status Section - UPDATED TO 3 COLUMNS -->
+    <div class="grid grid-cols-3 gap-4">
       <!-- Progress Section -->
       <div class="col-span-1">
         <div class="mb-2 text-sm font-medium">Progress</div>
@@ -202,6 +215,20 @@ onMount(() => {
           {:else}
             {packetInfo.current} of {packetInfo.total} packets
           {/if}
+        </div>
+      </div>
+
+      <!-- NEW: PTT Status Section -->
+      <div class="col-span-1 flex flex-col items-center justify-center">
+        <div class="mb-2 text-sm font-medium">PTT Status</div>
+        <div class="flex items-center gap-2">
+          <span class="text-2xl" class:animate-pulse={pttStatus === 'TX'}>📡</span>
+          <Badge
+            color={pttStatus === 'TX' ? 'red' : 'green'}
+            large
+          >
+            {pttStatus}
+          </Badge>
         </div>
       </div>
 

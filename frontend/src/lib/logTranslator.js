@@ -68,6 +68,8 @@ const logTranslations = {
   
   // Direct Protocol - still has "via VARA" in old code (backward compatibility)
   '\\[CONTROL\\] Sending response via VARA': 'Sending response...',
+  '\\[CONTROL\\] ⚡ PTT ON': null, 
+  '\\[CONTROL\\] ⚡ PTT OFF': null,
   '\\[CONTROL\\] Sending ([A-Z_]+) request via VARA': (match) => {
     return `Sending ${match[1]} request...`;
   },
