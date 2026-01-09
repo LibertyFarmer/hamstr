@@ -316,98 +316,21 @@ def send_note():
                 "success": False,
                 "message": "NSEC key not found. Please set up your NOSTR key first."
             }), 400
-            
-        socketio_logger.info("[CLIENT] Creating signed note...")
+
         keys = Keys.parse(nsec)
         
-        # Create tags array
+        # Build tags
         tags = []
-        
-        # Add hashtags if present
         for hashtag in hashtags:
             tag = Tag.parse(["t", hashtag])
             tags.append(tag)
-            
+        
         # Handle different note types
-        if note_type == NoteType.REPOST:
-            if not data.get('repost_id'):
+        if note_type == NoteType.REPLY:
+            if 'reply_to' not in data or 'reply_pubkey' not in data:
                 return jsonify({
                     "success": False,
-                    "message": "Repost requires note ID"
-                }), 400
-                
-            if not data.get('repost_pubkey'):
-                return jsonify({
-                    "success": False,
-                    "message": "Repost requires author's pubkey"
-                }), 400
-                
-            # Add e-tag for reposted note
-            e_tag = Tag.parse(["e", data['repost_id']])
-            tags.append(e_tag)
-            
-            # Add p-tag for original author
-            p_tag = Tag.parse(["p", data['repost_pubkey']])
-            tags.append(p_tag)
-            
-            # Use Kind 6 for reposts
-            builder = EventBuilder(
-                kind=Kind(6),
-                content=content,
-                tags=tags
-            )
-            
-        elif note_type == NoteType.QUOTE:
-            if not data.get('reply_to'):
-                return jsonify({
-                    "success": False,
-                    "message": "Quote requires note ID"
-                }), 400
-                    
-            if not data.get('reply_pubkey'):
-                return jsonify({
-                    "success": False,
-                    "message": "Quote requires author's pubkey"
-                }), 400
-
-            try:
-                # Convert hex note ID to proper bech32 format
-                event_id = EventId.from_hex(data['reply_to'])
-                note_bech32 = event_id.to_bech32()
-                
-                # Add the bech32 reference to the existing content
-                content = content + f"\nnostr:{note_bech32}"
-                socketio_logger.info(f"[CLIENT] Quote content formatted: {content}")
-                
-                # Add quote-specific tags
-                e_tag = Tag.parse(["e", data['reply_to'], "", "mention"])
-                q_tag = Tag.parse(["q", data['reply_to']])  # Add q tag for explicit quote
-                p_tag = Tag.parse(["p", data['reply_pubkey'], "", "mention"])
-                tags.extend([e_tag, p_tag, q_tag])
-
-                builder = EventBuilder(
-                    kind=Kind(1),
-                    content=content,
-                    tags=tags
-                )
-            except Exception as e:
-                socketio_logger.error(f"[CLIENT] Error processing quote: {str(e)}")
-                return jsonify({
-                    "success": False,
-                    "message": f"Error formatting quote: {str(e)}"
-                }), 500
-                    
-        elif note_type == NoteType.REPLY:
-            if not data.get('reply_to'):
-                return jsonify({
-                    "success": False,
-                    "message": "Reply requires note ID"
-                }), 400
-                
-            if not data.get('reply_pubkey'):
-                return jsonify({
-                    "success": False,
-                    "message": "Reply requires author's pubkey"
+                    "message": "Reply requires note ID and author's pubkey"
                 }), 400
             
             # Add e-tag with NIP-10 reply marker
@@ -420,6 +343,46 @@ def send_note():
             
             builder = EventBuilder(
                 kind=Kind(1),
+                content=content,
+                tags=tags
+            )
+            
+        elif note_type == NoteType.QUOTE:
+            if 'reply_to' not in data or 'reply_pubkey' not in data:
+                return jsonify({
+                    "success": False,
+                    "message": "Quote requires note ID and author's pubkey"
+                }), 400
+            
+            # For quotes, add the original note as a mention, not a reply
+            e_tag = Tag.parse(["e", data['reply_to'], "", "mention"])
+            tags.append(e_tag)
+            
+            # Add p-tag for the original note's author
+            p_tag = Tag.parse(["p", data['reply_pubkey']])
+            tags.append(p_tag)
+            
+            builder = EventBuilder(
+                kind=Kind(1),
+                content=content,
+                tags=tags
+            )
+            
+        elif note_type == NoteType.REPOST:
+            if 'repost_id' not in data or 'reply_pubkey' not in data:
+                return jsonify({
+                    "success": False,
+                    "message": "Repost requires note ID and author's pubkey"
+                }), 400
+            
+            # Repost uses kind 6
+            e_tag = Tag.parse(["e", data['repost_id']])
+            p_tag = Tag.parse(["p", data['reply_pubkey']])
+            tags.append(e_tag)
+            tags.append(p_tag)
+            
+            builder = EventBuilder(
+                kind=Kind(6),
                 content=content,
                 tags=tags
             )
@@ -437,7 +400,10 @@ def send_note():
         
         compressed_note = compress_nostr_data(note_json)
         socketio_logger.info("[CLIENT] Note compressed, preparing to send")
+        
         result_container = []
+        error_container = []
+        
         def send_note_thread():
             global radio_operation_in_progress
             with radio_lock:
@@ -445,6 +411,10 @@ def send_note():
                 try:
                     success = client.connect_and_send_note(config.S_CALLSIGN, compressed_note)
                     result_container.append(success)
+                except Exception as e:
+                    # Capture exception for hardware/protocol errors
+                    error_container.append(str(e))
+                    socketio_logger.error(f"[CLIENT] Exception during send: {str(e)}")
                 finally:
                     radio_operation_in_progress = False
 
@@ -459,11 +429,23 @@ def send_note():
                 "message": "Failed to connect to TNC - operation timed out"
             }), 500
 
-        if not result_container or not result_container[0]:
-            socketio_logger.error("[CLIENT] Failed to send note - TNC connection failed")
+        # Check for hardware/protocol errors (exceptions from backend)
+        if error_container:
+            error_msg = error_container[0]
+            
+            # Pass through the actual error message from the backend
+            socketio_logger.error(f"[CLIENT] Hardware/Protocol error: {error_msg}")
             return jsonify({
                 "success": False,
-                "message": "Failed to connect to TNC"
+                "message": error_msg
+            }), 500
+
+        if not result_container or not result_container[0]:
+            # Connection failed - remote station not responding
+            socketio_logger.error(f"[CLIENT] Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}")
+            return jsonify({
+                "success": False,
+                "message": f"Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}"
             }), 500
 
         return jsonify({
@@ -504,25 +486,26 @@ def request_notes(count):
             return jsonify({
                 "success": False,
                 "message": "NSEC key not found. Please set up your NOSTR key first."
-            }), 400
-            
-        keys = Keys.parse(nsec)
-        own_pubkey = keys.public_key().to_hex()
-        
+            }), 500
+
+        # Use camelCase keys as the frontend sends
         request_data = request.get_json()
-        request_type_value = request_data.get('requestType', NoteRequestType.SPECIFIC_USER.value)
+        request_type_value = request_data.get('requestType')
         search_text = request_data.get('searchText', '')
         
         if request_type_value not in ALLOWED_REQUEST_TYPES:
-            socketio_logger.error(f"[SYSTEM] Invalid request type: {request_type_value}")
+            socketio_logger.error(f"[CLIENT] Invalid request type: {request_type_value}")
             return jsonify({
                 "success": False,
-                "message": "Invalid request type"
+                "message": f"Invalid request type: {request_type_value}"
             }), 400
-            
+
         request_type = NoteRequestType(request_type_value)
         
         # Determine additional parameters based on request type
+        keys = Keys.parse(nsec)
+        own_pubkey = keys.public_key().to_hex()
+        
         if request_type == NoteRequestType.SPECIFIC_USER:
             additional_params = own_pubkey
             socketio_logger.info(f"[SYSTEM] Requesting own notes using pubkey: {own_pubkey}")
@@ -535,10 +518,13 @@ def request_notes(count):
         else:  # GLOBAL
             additional_params = None
             socketio_logger.info("[SYSTEM] Requesting global feed")
-
-        # Calculate a dynamic timeout based on the number of notes requested
-        # More notes = longer timeout
-        dynamic_timeout = max(config.CONNECTION_TIMEOUT, count * 60)  # At least 60s per note
+        
+        socketio_logger.debug(f"[CLIENT] Processing note request: type={request_type.name}, count={count}, params={additional_params}")
+        
+        # Calculate dynamic timeout based on note count
+        base_timeout = 60  # 1 minute base
+        per_note_timeout = 5  # 5 seconds per note
+        dynamic_timeout = base_timeout + (count * per_note_timeout)
         
         # Store original timeout to restore later
         original_timeout = config.CONNECTION_TIMEOUT
@@ -548,6 +534,8 @@ def request_notes(count):
         socketio_logger.info(f"[SYSTEM] Using extended timeout of {dynamic_timeout} seconds for {count} notes")
         
         result_container = []
+        error_container = []
+        
         def request_notes_thread():
             global radio_operation_in_progress
             with radio_lock:
@@ -560,6 +548,10 @@ def request_notes(count):
                         additional_params=additional_params
                     )
                     result_container.append((success, response))
+                except Exception as e:
+                    # Capture exception for hardware/protocol errors
+                    error_container.append(str(e))
+                    socketio_logger.error(f"[CLIENT] Exception during request: {str(e)}")
                 finally:
                     radio_operation_in_progress = False
                     # Restore original timeout
@@ -567,30 +559,49 @@ def request_notes(count):
 
         thread = threading.Thread(target=request_notes_thread)
         thread.start()
-        thread.join(timeout=dynamic_timeout + 30)  # Allow extra time for thread cleanup
+        thread.join(timeout=dynamic_timeout + 30)
 
         if thread.is_alive():
             # Thread is still running after timeout
-            socketio_logger.error("[CLIENT] Request timeout")
-            # Restore original timeout
+            socketio_logger.error("[CLIENT] Request timeout - operation timed out")
             config.CONNECTION_TIMEOUT = original_timeout
             return jsonify({
                 "success": False,
                 "message": "Failed to connect to TNC - operation timed out"
             }), 500
 
-        if not result_container:
-            socketio_logger.error("[CLIENT] Failed to connect to TNC")
+        # Check for hardware/protocol errors (exceptions from backend)
+        if error_container:
+            error_msg = error_container[0]
+            config.CONNECTION_TIMEOUT = original_timeout
+            
+            # Pass through the actual error message from the backend
+            socketio_logger.error(f"[CLIENT] Hardware/Protocol error: {error_msg}")
             return jsonify({
                 "success": False,
-                "message": "Failed to connect to TNC"
+                "message": error_msg
+            }), 500
+
+        if not result_container:
+            # No result at all - shouldn't happen but handle it
+            socketio_logger.error("[CLIENT] No result from connection attempt")
+            config.CONNECTION_TIMEOUT = original_timeout
+            return jsonify({
+                "success": False,
+                "message": "Connection failed"
             }), 500
 
         success, response = result_container[0]
+        
         if not success:
+            # Connection failed - remote station not responding (hardware worked but no response)
+            socketio_logger.error(f"[CLIENT] Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}")
+            config.CONNECTION_TIMEOUT = original_timeout
+            
+            # Return connection timeout error with callsign
             return jsonify({
                 "success": False,
-                "message": "Failed to connect to TNC"
+                "message": f"Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}"
             }), 500
 
         if response:
@@ -611,7 +622,7 @@ def request_notes(count):
                 socketio_logger.info("[DEBUG] Finished processing notes")
                 
                 try:
-                    notes_data = get_notes_from_db(1, count)  # Get fresh notes from DB
+                    notes_data = get_notes_from_db(1, count)
                     return jsonify({
                         "success": True,
                         "message": f"Retrieved {count} notes successfully",
@@ -643,7 +654,7 @@ def request_notes(count):
             config.CONNECTION_TIMEOUT = original_timeout
         return jsonify({
             "success": False,
-            "message": "Failed to connect to TNC"
+            "message": f"Error: {str(e)}"
         }), 500
 
 def create_note(content):
@@ -1227,8 +1238,8 @@ def send_zap():
 
                 session = client.core.connect(server_callsign)
                 if not session:
-                    socketio_logger.error("[CLIENT] Failed to connect to server")
-                    result_container[0] = {"success": False, "message": "Failed to connect to server"}
+                    socketio_logger.error(f"[CLIENT] Unable to connect to {server_callsign[0]}-{server_callsign[1]}")
+                    result_container[0] = {"success": False, "message": f"Unable to connect to {server_callsign[0]}-{server_callsign[1]}"}
                     return
 
                 # Log successful connection
@@ -1579,9 +1590,10 @@ def send_zap():
                         client.core.disconnect(session)
                         
             except Exception as e:
-                socketio_logger.error(f"[CLIENT] Radio operation error: {e}")
-                result_container[0] = {"success": False, "message": f"Radio error: {str(e)}"}
-        
+                    socketio_logger.error(f"[CLIENT] Hardware/Protocol error: {e}")
+                    # Pass through the actual backend error message
+                    result_container[0] = {"success": False, "message": str(e)}
+                
         # Execute radio operation in thread
         radio_thread = threading.Thread(target=radio_operation)
         radio_thread.start()

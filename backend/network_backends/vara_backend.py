@@ -407,7 +407,7 @@ class VARABackend(NetworkBackend):
     
     def connect(self, remote_callsign: tuple) -> Optional[object]:
         """
-        Establish connection to remote station.
+        Connect to a remote station via VARA HF.
         
         Args:
             remote_callsign: Tuple of (callsign, ssid)
@@ -602,7 +602,8 @@ class VARABackend(NetworkBackend):
                 except:
                     pass
             
-            return None
+            # Re-raise the exception so it propagates to web_app.py
+            raise
     
     def send_data(self, session: VARASession, data: bytes) -> bool:
         """

@@ -92,7 +92,8 @@ class NetworkBackendManager:
             
         except Exception as e:
             logging.error(f"[BACKEND_MGR] Connection failed: {e}")
-            return None
+            # Re-raise the exception so web_app.py can handle it properly
+            raise
     
     def send_data(self, session: object, data: bytes) -> bool:
         """

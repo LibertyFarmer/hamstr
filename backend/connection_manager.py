@@ -156,8 +156,11 @@ class ConnectionManager:
     
     def create_session(self, remote_callsign):
         """Create a new session."""
+        # Generate session_id from remote callsign
+        session_id = f"{remote_callsign[0]}-{remote_callsign[1]}"
+        
         session = Session(
-            local_callsign=self.callsign,
+            session_id=session_id,
             remote_callsign=remote_callsign
         )
         session.tnc_connection = self.tnc_connection

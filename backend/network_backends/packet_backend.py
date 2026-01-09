@@ -71,7 +71,7 @@ class PacketBackend(NetworkBackend):
             remote_callsign: Tuple of (callsign, ssid)
             
         Returns:
-            Session object if successful, None if failed
+            Session object if successful, raises exception if failed
         """
         try:
             self._update_status(BackendStatus.CONNECTING)
@@ -96,7 +96,7 @@ class PacketBackend(NetworkBackend):
                 if not self.connection_manager.start():
                     logging.error("[PACKET_BACKEND] Failed to start connection manager")
                     self._update_status(BackendStatus.ERROR)
-                    return None
+                    raise Exception("Failed to connect to TNC - Is the TNC software running?")
             
             # Create session using existing logic
             session = self.connection_manager.connect(remote_callsign)
@@ -108,12 +108,15 @@ class PacketBackend(NetworkBackend):
             else:
                 self._update_status(BackendStatus.ERROR)
                 logging.error(f"[PACKET_BACKEND] Failed to connect to {remote_callsign}")
+                # This is a connection timeout - remote station not responding
+                # Return None so web_app.py shows "Unable to connect to CALLSIGN-SSID"
                 return None
                 
         except Exception as e:
             self._update_status(BackendStatus.ERROR)
             logging.error(f"[PACKET_BACKEND] Connection error: {e}")
-            return None
+            # Re-raise the exception so it propagates to web_app.py
+            raise
     
     def send_data(self, session: object, data: bytes) -> bool:
         """
