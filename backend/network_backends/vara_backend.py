@@ -943,72 +943,81 @@ class VARABackend(NetworkBackend):
             return False
     
     def disconnect(self, session: VARASession) -> bool:
-            """
-            Disconnect session and clean up sockets with PTT control.
+        """
+        Disconnect session and clean up sockets with PTT control.
+        
+        Args:
+            session: VARASession to disconnect
             
-            Args:
-                session: VARASession to disconnect
+        Returns:
+            True if successful, False otherwise
+        """
+        logging.info(f"[VARA_BACKEND] disconnect() called for {session.remote_callsign}")
+        try:
+            session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
+            
+            # PTT INTEGRATION: Ensure PTT is off before disconnect
+            if self.ptt:
+                try:
+                    self.ptt.unkey()
+                except:
+                    pass
+            
+            # Close data socket
+            if session.data_socket:
+                try:
+                    session.data_socket.close()
+                    logging.info("[VARA_BACKEND] Data socket closed")
+                except:
+                    pass
+                session.data_socket = None
+            
+            # CRITICAL: For server, DON'T close command socket - it's the listening socket!
+            # For client, close the session's command socket and cleanup monitor
+            if not self.is_server and session.command_socket:
+                try:
+                    session.command_socket.close()
+                    logging.info("[VARA_BACKEND] Client command socket closed")
+                except:
+                    pass
+                session.command_socket = None
                 
-            Returns:
-                True if successful, False otherwise
-            """
-            logging.info(f"[VARA_BACKEND] disconnect() called for {session.remote_callsign}")
-            try:
-                session_key = f"{session.remote_callsign[0]}-{session.remote_callsign[1]}"
+                # CLIENT: Stop monitor thread for next connection
+                self._vara_ready = False
+                if self._ptt_monitor_thread and self._ptt_monitor_thread.is_alive():
+                    logging.info("[VARA_BACKEND] Stopping client monitor thread...")
+                    self._ptt_monitor_thread.join(timeout=2)
+                self._ptt_monitor_thread = None  # Clear the thread reference
+                self._listening_command_socket = None
                 
-                # PTT INTEGRATION: Ensure PTT is off before disconnect
-                if self.ptt:
-                    try:
-                        self.ptt.unkey()
-                    except:
-                        pass
-                
-                # Close data socket
-                if session.data_socket:
-                    try:
-                        session.data_socket.close()
-                        logging.info("[VARA_BACKEND] Data socket closed")
-                    except:
-                        pass
-                    session.data_socket = None
-                
-                # CRITICAL: For server, DON'T close command socket - it's the listening socket!
-                # For client, close the session's command socket
-                if not self.is_server and session.command_socket:
-                    try:
-                        session.command_socket.close()
-                        logging.info("[VARA_BACKEND] Client command socket closed")
-                    except:
-                        pass
-                    session.command_socket = None
-                else:
-                    # Server: Just null out the session reference
-                    session.command_socket = None
-                    logging.info("[VARA_BACKEND] Server session ended, listening socket will be restarted")
-                
-                # Clear buffers
-                if hasattr(self, '_receive_buffers') and session_key in self._receive_buffers:
-                    del self._receive_buffers[session_key]
-                if hasattr(self, '_json_buffers') and session_key in self._json_buffers:
-                    del self._json_buffers[session_key]
-                
-                # Remove from active sessions
-                if session_key in self._active_sessions:
-                    del self._active_sessions[session_key]
-                
-                session.connected = False
-                self._update_status(BackendStatus.DISCONNECTED)
-                
-                # Server: Restart VARA listening for next connection
-                if self.is_server:
-                    self._restart_vara_listening()
-                
-                logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign}")
-                return True
-                
-            except Exception as e:
-                logging.error(f"[VARA_BACKEND] Disconnect error: {e}")
-                return False
+            else:
+                # Server: Just null out the session reference
+                session.command_socket = None
+                logging.info("[VARA_BACKEND] Server session ended, listening socket will be restarted")
+            
+            # Clear buffers
+            if hasattr(self, '_receive_buffers') and session_key in self._receive_buffers:
+                del self._receive_buffers[session_key]
+            if hasattr(self, '_json_buffers') and session_key in self._json_buffers:
+                del self._json_buffers[session_key]
+            
+            # Remove from active sessions
+            if session_key in self._active_sessions:
+                del self._active_sessions[session_key]
+            
+            session.connected = False
+            self._update_status(BackendStatus.DISCONNECTED)
+            
+            # Server: Restart VARA listening for next connection
+            if self.is_server:
+                self._restart_vara_listening()
+            
+            logging.info(f"[VARA_BACKEND] Disconnected from {session.remote_callsign}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"[VARA_BACKEND] Disconnect error: {e}")
+            return False
         
     def cleanup(self):
         """Clean up all VARA resources including PTT controller."""
