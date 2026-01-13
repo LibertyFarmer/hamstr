@@ -1230,7 +1230,7 @@ def send_zap():
         def radio_operation():
             nonlocal result_container
             try:
-                client = Client(BASE_DIR)
+                # Use global client instance (same as send_note and request_notes)
                 server_callsign = parse_callsign(config.HAMSTR_SERVER)
 
                 # Log connection attempt
