@@ -280,8 +280,8 @@ python server.py
 
 ## 🔮 Roadmap
 
-### **Near-Term (Q1 2025)**
-- 🚧 Reticulum mesh networking integration
+### **Near-Term (Q1 2026)**
+- 🚧 Reticulum mesh networking integration - WORKING ON NOW
 - 🚧 FLDIGI software TNC support
 - 🚧 GUI TNC configuration (no more .ini editing)
 - 🚧 Enhanced zap status display in UI
