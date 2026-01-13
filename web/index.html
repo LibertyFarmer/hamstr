@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="HAMSTR - NOSTR over Ham Radio. Unstoppable communications for censorship resistance, emergency response, and mesh networks. Lightning payments without internet.">
+    <title>HAMSTR - NOSTR Over Ham Radio</title>
+    <link rel="icon" type="image/webp" href="hamster_small.webp">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-dark: #0a0e1a;
+            --bg-darker: #050810;
+            --bg-card: #141824;
+            --nostr-purple: #8b5cf6;
+            --bitcoin-orange: #f7931a;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a8b8;
+            --accent-cyan: #06b6d4;
+            --accent-pink: #ec4899;
+            --border-color: rgba(139, 92, 246, 0.2);
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Header Navigation */
+        header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background: rgba(10, 14, 26, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 1000;
+            padding: 1rem 0;
+        }
+
+        nav {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.5rem;
+            font-weight: 800;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+
+        .logo img {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--nostr-purple);
+        }
+
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        /* Hero Section */
+        .hero {
+            margin-top: 80px;
+            position: relative;
+            min-height: 600px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .hero-image {
+            width: 100%;
+            max-width: 1400px;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .hero-content {
+            position: absolute;
+            bottom: 3rem;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            max-width: 800px;
+            padding: 0 2rem;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--nostr-purple), var(--accent-pink));
+            color: white;
+            padding: 1rem 2.5rem;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.1rem;
+            transition: transform 0.3s, box-shadow 0.3s;
+            border: none;
+            cursor: pointer;
+            display: inline-block;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            color: white;
+            padding: 1rem 2.5rem;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            display: inline-block;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: var(--nostr-purple);
+        }
+
+        /* Section Base Styles */
+        section {
+            padding: 3rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        /* Section Dividers */
+        section::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-width: 600px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+        }
+
+        section:last-of-type::after {
+            display: none;
+        }
+
+        .section-icon {
+            font-size: 3rem;
+            text-align: center;
+            margin-bottom: 1rem;
+            opacity: 0.8;
+        }
+
+        .section-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--nostr-purple), var(--accent-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            max-width: 700px;
+            margin: 0 auto 3rem;
+        }
+
+        /* Why It Matters - Three Pillars */
+        .pillars {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .pillar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pillar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--nostr-purple), var(--accent-pink));
+            transform: scaleX(0);
+            transition: transform 0.3s;
+        }
+
+        .pillar:hover::before {
+            transform: scaleX(1);
+        }
+
+        .pillar:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(139, 92, 246, 0.2);
+        }
+
+        .pillar-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .pillar h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--nostr-purple);
+        }
+
+        .pillar p {
+            color: var(--text-secondary);
+            line-height: 1.8;
+        }
+
+        /* What is HAMSTR - Flow Diagram */
+        .flow-diagram {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 3rem;
+            margin: 3rem 0;
+        }
+
+        .flow-steps {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 2rem;
+        }
+
+        .flow-step {
+            flex: 1;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .flow-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1rem;
+            background: linear-gradient(135deg, var(--nostr-purple), var(--accent-pink));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+        }
+
+        .flow-arrow {
+            font-size: 2rem;
+            color: var(--nostr-purple);
+            flex: 0 0 auto;
+        }
+
+        .flow-step h4 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .flow-step p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(247, 147, 26, 0.2);
+            color: var(--bitcoin-orange);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 2rem;
+        }
+
+        /* Features Grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            margin: 3rem auto;
+            max-width: 1000px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--nostr-purple);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.15);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Economic Freedom Section */
+        .economic-freedom {
+            background: linear-gradient(135deg, rgba(247, 147, 26, 0.1), rgba(139, 92, 246, 0.1));
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 3rem;
+            margin: 3rem 0;
+        }
+
+        .economic-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .economic-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 2rem;
+            border: 1px solid rgba(247, 147, 26, 0.3);
+        }
+
+        .economic-card h4 {
+            font-size: 1.3rem;
+            margin-bottom: 0.5rem;
+            color: var(--bitcoin-orange);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .coming-soon-tag {
+            font-size: 0.7rem;
+            background: rgba(139, 92, 246, 0.3);
+            color: var(--nostr-purple);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .future-tag {
+            font-size: 0.7rem;
+            background: rgba(6, 182, 212, 0.3);
+            color: var(--accent-cyan);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        /* Protocol Comparison Table */
+        .protocol-table {
+            overflow-x: auto;
+            margin: 3rem 0;
+            border-radius: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 1.25rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: rgba(139, 92, 246, 0.1);
+            color: var(--nostr-purple);
+            font-weight: 700;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover {
+            background: rgba(139, 92, 246, 0.05);
+        }
+
+        /* Mobile Protocol Cards - Only on mobile */
+        .protocol-cards-mobile {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .protocol-table {
+                display: none;
+            }
+
+            .protocol-cards-mobile {
+                display: block;
+            }
+
+            .protocol-card-mobile {
+                background: var(--bg-card);
+                border: 1px solid var(--border-color);
+                border-radius: 12px;
+                padding: 1.5rem;
+                margin-bottom: 1rem;
+            }
+
+            .protocol-card-mobile h4 {
+                color: var(--nostr-purple);
+                font-size: 1.3rem;
+                margin-bottom: 1rem;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+
+            .protocol-card-mobile .protocol-detail {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.75rem 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }
+
+            .protocol-card-mobile .protocol-detail:last-child {
+                border-bottom: none;
+            }
+
+            .protocol-card-mobile .protocol-label {
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+                font-weight: 600;
+            }
+
+            .protocol-card-mobile .protocol-value {
+                color: var(--text-primary);
+                text-align: right;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Testimonials / In The Wild */
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin: 3rem 0;
+        }
+
+        .testimonial {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .testimonial-quote {
+            font-size: 1.1rem;
+            font-style: italic;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            line-height: 1.8;
+        }
+
+        .testimonial-source {
+            font-weight: 600;
+            color: var(--nostr-purple);
+        }
+
+        .video-embed {
+            margin: 3rem 0;
+            text-align: center;
+        }
+
+        /* Use Cases */
+        .use-cases {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin: 3rem auto;
+            max-width: 900px;
+        }
+
+        .use-case {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .use-case:hover {
+            transform: scale(1.05);
+            border-color: var(--nostr-purple);
+        }
+
+        .use-case-icon {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .use-case h4 {
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        /* Roadmap */
+        .roadmap-section {
+            margin: 3rem 0;
+        }
+
+        .roadmap-column {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .roadmap-column h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-working {
+            color: #10b981;
+        }
+
+        .status-soon {
+            color: var(--bitcoin-orange);
+        }
+
+        .status-future {
+            color: var(--accent-cyan);
+        }
+
+        .roadmap-column ul {
+            list-style: none;
+        }
+
+        .roadmap-column li {
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+        }
+
+        .roadmap-column li:last-child {
+            border-bottom: none;
+        }
+
+        /* Get Started */
+        .get-started-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 3rem;
+            margin: 3rem 0;
+        }
+
+        .requirements {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            margin: 2rem 0;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .requirement {
+            background: rgba(139, 92, 246, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .requirement h4 {
+            color: var(--nostr-purple);
+            margin-bottom: 0.75rem;
+            font-size: 1.1rem;
+        }
+
+        .requirement ul {
+            list-style: none;
+            color: var(--text-secondary);
+        }
+
+        .requirement li::before {
+            content: "✓ ";
+            color: var(--nostr-purple);
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-darker);
+            border-top: 1px solid var(--border-color);
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: var(--nostr-purple);
+        }
+
+        .footer-credit {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        .footer-credit a {
+            color: var(--bitcoin-orange);
+            text-decoration: none;
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: var(--bg-darker);
+                flex-direction: column;
+                padding: 2rem;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .nav-links.active {
+                display: flex;
+            }
+
+            .mobile-menu-btn {
+                display: block;
+            }
+
+            .hero {
+                margin-top: 60px;
+                min-height: 400px;
+            }
+
+            .hero-content {
+                bottom: 1rem;
+            }
+
+            .section-title {
+                font-size: 2rem;
+            }
+
+            .flow-steps {
+                flex-direction: column;
+            }
+
+            .flow-arrow {
+                transform: rotate(90deg);
+            }
+
+            section {
+                padding: 2rem 1.5rem;
+            }
+
+            /* Make features grid single column on mobile */
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            /* Make use-cases single column on mobile */
+            .use-cases {
+                grid-template-columns: 1fr;
+            }
+
+            /* Make requirements vertical on mobile */
+            .requirements {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Tablet - 2 columns for features and use-cases */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .use-cases {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* Smooth fade-in animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in {
+            animation: fadeInUp 0.6s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Navigation -->
+    <header>
+        <nav>
+            <a href="#" class="logo">
+                <img src="hamster_small.webp" alt="HAMSTR Logo">
+                <span>HAMSTR</span>
+            </a>
+            <button class="mobile-menu-btn" aria-label="Toggle menu">☰</button>
+            <ul class="nav-links">
+                <li><a href="#what">What</a></li>
+                <li><a href="#why">Why</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#protocols">Protocols</a></li>
+                <li><a href="#start">Get Started</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <img src="hamstr_hero.png" alt="HAMSTR - NOSTR Over Ham Radio" class="hero-image">
+        <div class="hero-content">
+            <div class="hero-cta">
+                <a href="https://github.com/LibertyFarmer/hamstr" class="btn-primary" target="_blank">View on GitHub</a>
+                <a href="#start" class="btn-secondary">Get Started</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- What is HAMSTR -->
+    <section id="what">
+        <div class="section-icon">🔧</div>
+        <h2 class="section-title">What is HAMSTR?</h2>
+        <p class="section-subtitle">A modular system that bridges ham radio with the NOSTR protocol, enabling fully off-grid social communication and economic activity.</p>
+        
+        <div class="flow-diagram">
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="flow-icon">📱</div>
+                    <h4>Off-Grid Client</h4>
+                    <p>No internet required</p>
+                </div>
+                
+                <div class="flow-arrow">→</div>
+                
+                <div class="flow-step">
+                    <div class="flow-icon">📡</div>
+                    <h4>Ham Radio</h4>
+                    <p>HF, VHF, or mesh</p>
+                </div>
+                
+                <div class="flow-arrow">→</div>
+                
+                <div class="flow-step">
+                    <div class="flow-icon">🖥️</div>
+                    <h4>HAMSTR Server</h4>
+                    <p>With internet access</p>
+                </div>
+                
+                <div class="flow-arrow">→</div>
+                
+                <div class="flow-step">
+                    <div class="flow-icon">🌍</div>
+                    <h4>NOSTR Network</h4>
+                    <p>Global decentralized social</p>
+                </div>
+            </div>
+            
+            <div style="text-align: center;">
+                <span class="badge">🔐 Zero-Knowledge Architecture - Server Never Sees Your Private Keys</span>
+                <span class="badge">🏆 Funded by OpenSats</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why It Matters - Three Pillars -->
+    <section id="why">
+        <div class="section-icon">🌟</div>
+        <h2 class="section-title">Why HAMSTR Matters</h2>
+        <p class="section-subtitle">When communications are restricted—whether by governments, infrastructure failure, or remote locations—HAMSTR keeps you connected.</p>
+        
+        <div class="pillars">
+            <div class="pillar fade-in">
+                <div class="pillar-icon">🔒</div>
+                <h3>Censorship Resistance</h3>
+                <p>No ISP required. No government can block it. Ham radio operates on frequencies that bypass traditional internet infrastructure entirely. Your communications remain unstoppable.</p>
+            </div>
+            
+            <div class="pillar fade-in">
+                <div class="pillar-icon">🚨</div>
+                <h3>Emergency Communications</h3>
+                <p>When hurricanes, earthquakes, or other disasters take down cell towers and internet, ham radio still works. HAMSTR ensures critical information flows when it matters most.</p>
+            </div>
+            
+            <div class="pillar fade-in">
+                <div class="pillar-icon">🌐</div>
+                <h3>Mesh Network Ready</h3>
+                <p>With Reticulum integration coming soon, HAMSTR will enable self-healing mesh networks over LoRa and other protocols. Build resilient, distributed communication infrastructure.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features">
+        <div class="section-icon">✨</div>
+        <h2 class="section-title">Core Features</h2>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">📝</div>
+                <h3>Full NOSTR Operations</h3>
+                <p>Post, reply, boost, and quote notes. Search by hashtag or npub. Follow feeds and discover the global network—all without internet.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>Lightning Zaps</h3>
+                <p>World's first implementation of Lightning payments over ham radio with full NIP-57 compliance. Your zaps appear instantly in all NOSTR clients.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📻</div>
+                <h3>Multi-Protocol Support</h3>
+                <p>Works with VARA HF, legacy packet radio TNCs (hardware and software like Direwolf), and upcoming Reticulum mesh networking.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <h3>Security First</h3>
+                <p>All cryptography and event signing happens client-side. Server is completely keyless and acts as a pure passthrough relay.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">⚙️</div>
+                <h3>Modular Architecture</h3>
+                <p>Protocol-agnostic design means adding new radio transports is straightforward. Each protocol runs as an isolated module.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🌍</div>
+                <h3>Global HF Reach</h3>
+                <p>Despite lower speeds (300-600 baud HF), ham radio can reach anywhere on Earth. Multiple protocols ensure robust message delivery.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Economic Freedom - Bitcoin Subsection -->
+    <section id="bitcoin">
+        <div class="section-icon">⚡</div>
+        <h2 class="section-title">Economic Freedom Without Internet</h2>
+        <p class="section-subtitle">In oppressive regimes, economic freedom is as critical as free speech. HAMSTR enables Bitcoin transactions when internet access is blocked or unavailable.</p>
+        
+        <div class="economic-freedom">
+            <div class="economic-grid">
+                <div class="economic-card">
+                    <h4>⚡ Lightning Payments <span style="font-size: 0.7rem; background: rgba(16, 185, 129, 0.3); color: #10b981; padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600;">WORKING NOW</span></h4>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">Send Lightning zaps completely offline via ham radio. Full NIP-57 compliance means your payments appear instantly across the entire NOSTR ecosystem.</p>
+                </div>
+                
+                <div class="economic-card">
+                    <h4>🪙 CASHU Integration <span class="coming-soon-tag">COMING SOON</span></h4>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">Ecash send and receive while completely offline. Privacy-preserving electronic cash that works without any internet connection.</p>
+                </div>
+                
+                <div class="economic-card">
+                    <h4>₿ On-Chain Bitcoin <span class="future-tag">FUTURE</span></h4>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">Send Bitcoin transactions and check wallet balances over ham radio. Complete financial sovereignty without internet infrastructure.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Protocol Comparison -->
+    <section id="protocols">
+        <div class="section-icon">📡</div>
+        <h2 class="section-title">Supported Radio Protocols</h2>
+        <p class="section-subtitle">HAMSTR's modular architecture supports multiple radio transports, from legacy packet systems to modern digital modes and upcoming mesh networks.</p>
+        
+        <div class="protocol-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Protocol</th>
+                        <th>Speed</th>
+                        <th>Error Correction</th>
+                        <th>Connection Type</th>
+                        <th>Best For</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>VARA HF</strong></td>
+                        <td>17-600 bps adaptive</td>
+                        <td>Built-in ARQ</td>
+                        <td>USB/Serial</td>
+                        <td>HF long-distance, most users</td>
+                        <td><span style="color: #10b981;">✓ Working</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Packet Radio (TNC)</strong></td>
+                        <td>300-1200 baud</td>
+                        <td>Custom HAMSTR ARQ</td>
+                        <td>Serial, USB, Bluetooth</td>
+                        <td>VHF/UHF, legacy equipment</td>
+                        <td><span style="color: #10b981;">✓ Working</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Direwolf (Software TNC)</strong></td>
+                        <td>300-1200 baud</td>
+                        <td>Custom HAMSTR ARQ</td>
+                        <td>TCP/IP, USB</td>
+                        <td>Software-defined radio, cost-effective</td>
+                        <td><span style="color: #10b981;">✓ Working</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Reticulum Mesh</strong></td>
+                        <td>Varies by transport</td>
+                        <td>Built-in encryption</td>
+                        <td>LoRa, packet, TCP/IP</td>
+                        <td>Mesh networks, unlicensed spectrum</td>
+                        <td><span style="color: var(--bitcoin-orange);">⧗ Coming Soon</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>FLDIGI</strong></td>
+                        <td>Multiple PSK/RTTY modes</td>
+                        <td>Mode-dependent</td>
+                        <td>TCP/IP</td>
+                        <td>Flexible digital modes</td>
+                        <td><span style="color: var(--bitcoin-orange);">⧗ Coming Soon</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Mobile-friendly protocol cards -->
+        <div class="protocol-cards-mobile">
+            <div class="protocol-card-mobile">
+                <h4>VARA HF <span style="color: #10b981; font-size: 0.8rem;">✓ Working</span></h4>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Speed</span>
+                    <span class="protocol-value">17-600 bps adaptive</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Error Correction</span>
+                    <span class="protocol-value">Built-in ARQ</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Connection</span>
+                    <span class="protocol-value">USB/Serial</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Best For</span>
+                    <span class="protocol-value">HF long-distance</span>
+                </div>
+            </div>
+
+            <div class="protocol-card-mobile">
+                <h4>Packet Radio (TNC) <span style="color: #10b981; font-size: 0.8rem;">✓ Working</span></h4>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Speed</span>
+                    <span class="protocol-value">300-1200 baud</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Error Correction</span>
+                    <span class="protocol-value">Custom HAMSTR ARQ</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Connection</span>
+                    <span class="protocol-value">Serial, USB, BT</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Best For</span>
+                    <span class="protocol-value">VHF/UHF, legacy</span>
+                </div>
+            </div>
+
+            <div class="protocol-card-mobile">
+                <h4>Direwolf <span style="color: #10b981; font-size: 0.8rem;">✓ Working</span></h4>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Speed</span>
+                    <span class="protocol-value">300-1200 baud</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Error Correction</span>
+                    <span class="protocol-value">Custom HAMSTR ARQ</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Connection</span>
+                    <span class="protocol-value">TCP/IP, USB</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Best For</span>
+                    <span class="protocol-value">Software-defined</span>
+                </div>
+            </div>
+
+            <div class="protocol-card-mobile">
+                <h4>Reticulum Mesh <span style="color: var(--bitcoin-orange); font-size: 0.8rem;">⧗ Soon</span></h4>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Speed</span>
+                    <span class="protocol-value">Varies by transport</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Error Correction</span>
+                    <span class="protocol-value">Built-in encryption</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Connection</span>
+                    <span class="protocol-value">LoRa, packet, TCP/IP</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Best For</span>
+                    <span class="protocol-value">Mesh networks</span>
+                </div>
+            </div>
+
+            <div class="protocol-card-mobile">
+                <h4>FLDIGI <span style="color: var(--bitcoin-orange); font-size: 0.8rem;">⧗ Soon</span></h4>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Speed</span>
+                    <span class="protocol-value">Multiple modes</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Error Correction</span>
+                    <span class="protocol-value">Mode-dependent</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Connection</span>
+                    <span class="protocol-value">TCP/IP</span>
+                </div>
+                <div class="protocol-detail">
+                    <span class="protocol-label">Best For</span>
+                    <span class="protocol-value">Flexible digital</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- In The Wild - Testimonials -->
+    <section id="recognition">
+        <div class="section-icon">🏆</div>
+        <h2 class="section-title">In The Wild</h2>
+        
+        <div class="testimonial-grid">
+            <div class="testimonial">
+                <p class="testimonial-quote">"The OpenSats Committee was very impressed with your proposal and HAMSTR"</p>
+                <p class="testimonial-source">— OpenSats Grant Committee</p>
+            </div>
+        </div>
+        
+        <div class="video-embed">
+            <h3 style="margin-bottom: 1.5rem; color: var(--text-secondary);">Featured on Citadel Dispatch with Matt Odell</h3>
+            <a href="https://www.youtube.com/watch?v=E2Rd59bMEJE" target="_blank" rel="noopener noreferrer">
+                <div style="position: relative; max-width: 800px; margin: 0 auto; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-color); cursor: pointer; transition: all 0.3s;" onmouseover="this.style.borderColor='var(--nostr-purple)'" onmouseout="this.style.borderColor='var(--border-color)'">
+                    <img src="https://img.youtube.com/vi/E2Rd59bMEJE/maxresdefault.jpg" 
+                         alt="HAMSTR on Citadel Dispatch" 
+                         style="width: 100%; display: block;">
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80px; height: 80px; background: rgba(255, 0, 0, 0.9); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                        <div style="width: 0; height: 0; border-left: 25px solid white; border-top: 15px solid transparent; border-bottom: 15px solid transparent; margin-left: 8px;"></div>
+                    </div>
+                </div>
+            </a>
+            <p style="margin-top: 1rem; color: var(--text-secondary); text-align: center;">Click to watch on YouTube</p>
+        </div>
+    </section>
+
+    <!-- Who Needs This -->
+    <section id="use-cases">
+        <div class="section-icon">👥</div>
+        <h2 class="section-title">Who Needs HAMSTR?</h2>
+        
+        <div class="use-cases">
+            <div class="use-case">
+                <div class="use-case-icon">🕊️</div>
+                <h4>Human Rights Defenders</h4>
+            </div>
+            
+            <div class="use-case">
+                <div class="use-case-icon">🚨</div>
+                <h4>Emergency Coordinators</h4>
+            </div>
+            
+            <div class="use-case">
+                <div class="use-case-icon">🏔️</div>
+                <h4>Remote Communities</h4>
+            </div>
+            
+            <div class="use-case">
+                <div class="use-case-icon">🔐</div>
+                <h4>Privacy Advocates</h4>
+            </div>
+            
+            <div class="use-case">
+                <div class="use-case-icon">🌐</div>
+                <h4>Mesh Network Operators</h4>
+            </div>
+            
+            <div class="use-case">
+                <div class="use-case-icon">⚡</div>
+                <h4>Bitcoin Maximalists</h4>
+            </div>
+        </div>
+    </section>
+
+    <!-- Get Started -->
+    <section id="start">
+        <div class="section-icon">🚀</div>
+        <h2 class="section-title">Get Started</h2>
+        <p class="section-subtitle">Ready to run unstoppable infrastructure? Here's what you need.</p>
+        
+        <div class="get-started-content">
+            <div class="requirements">
+                <div class="requirement">
+                    <h4>Required</h4>
+                    <ul>
+                        <li>Valid amateur radio license</li>
+                        <li>Python 3.7+</li>
+                        <li>Node.js 16+ (frontend)</li>
+                        <li>Ham radio transceiver</li>
+                        <li>NOSTR private key (nsec)</li>
+                    </ul>
+                </div>
+                
+                <div class="requirement">
+                    <h4>For VARA HF</h4>
+                    <ul>
+                        <li>VARA HF modem software</li>
+                        <li>Sound card interface</li>
+                        <li>Windows or Wine</li>
+                    </ul>
+                </div>
+                
+                <div class="requirement">
+                    <h4>For Packet Radio</h4>
+                    <ul>
+                        <li>KISS-compatible TNC</li>
+                        <li>Hardware (KPC-3, KAM) or</li>
+                        <li>Software (Direwolf, UZ7HO)</li>
+                        <li>Serial/USB/Bluetooth connection</li>
+                    </ul>
+                </div>
+                
+                <div class="requirement">
+                    <h4>For Lightning Zaps</h4>
+                    <ul>
+                        <li>Lightning wallet with NWC</li>
+                        <li>Alby, Mutiny, etc.</li>
+                        <li>NWC connection string</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 3rem;">
+                <a href="https://github.com/LibertyFarmer/hamstr" class="btn-primary" target="_blank">View Installation Guide on GitHub</a>
+                <p style="margin-top: 1rem; color: var(--text-secondary);">Complete documentation, setup instructions, and troubleshooting</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Roadmap -->
+    <section id="roadmap">
+        <div class="section-icon">🗺️</div>
+        <h2 class="section-title">Roadmap</h2>
+        
+        <div class="roadmap-section">
+            <div class="roadmap-column">
+                <h3><span class="status-working">✓</span> Working Now</h3>
+                <ul>
+                    <li>DirectProtocol with VARA HF (fast, reliable, production-ready)</li>
+                    <li>PacketProtocol for legacy TNC systems (300-1200 baud)</li>
+                    <li>Complete Lightning zaps via ham radio (NIP-57 compliant)</li>
+                    <li>Full NOSTR read/write operations (posts, replies, zaps, search)</li>
+                    <li>Content compression and CRC checks</li>
+                    <li>Real-time progress tracking with packet status</li>
+                    <li>Zero-knowledge server architecture</li>
+                </ul>
+            </div>
+            
+            <div class="roadmap-column">
+                <h3><span class="status-soon">⧗</span> Coming Soon (Q1-Q2 2025)</h3>
+                <ul>
+                    <li>Reticulum mesh networking integration</li>
+                    <li>CASHU ecash integration for offline transactions</li>
+                    <li>FLDIGI software TNC support (PSK, RTTY modes)</li>
+                    <li>GUI TNC configuration (no more .ini editing)</li>
+                    <li>Enhanced zap status display in UI</li>
+                    <li>VHF/UHF performance optimizations</li>
+                </ul>
+            </div>
+            
+            <div class="roadmap-column">
+                <h3><span class="status-future">◆</span> Future Vision</h3>
+                <ul>
+                    <li>On-chain Bitcoin sending and balance checking</li>
+                    <li>Multi-server failover and load balancing</li>
+                    <li>Mobile client support (Android/iOS)</li>
+                    <li>Global mesh network of HAMSTR servers</li>
+                    <li>Satellite communication support</li>
+                    <li>Integration with Meshtastic/LoRa networks</li>
+                    <li>Emergency broadcast system</li>
+                    <li>Offline-first Lightning routing</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-links">
+                <a href="https://github.com/LibertyFarmer/hamstr" target="_blank">GitHub</a>
+                <a href="https://github.com/LibertyFarmer/hamstr/blob/main/README.md" target="_blank">Documentation</a>
+                <a href="https://opensats.org/" target="_blank">OpenSats</a>
+                <a href="https://github.com/LibertyFarmer/hamstr/blob/main/LICENSE" target="_blank">MIT License</a>
+            </div>
+            
+            <p class="footer-credit">
+                Created by <a href="https://nostr.com/nprofile1qqsw8tha4zrj22njem340rfnktwdjr5lu5achmtrglh4ufhhggg6mwcpndmhxue69uhkummn9ekx7mp0y5erqamnwvaz7tmwdaehgu3wd3skuep0y5erqffjxpshvct5v9ez2v3swaehxw309ahx7um5wgh8w6twv5hj2v3sy5erqctkv96xzu39xgc8wumn8ghj7ur4wfcxcetjv4kxz7fwvdhk6te9xgc8wumn8ghj7un9d3shjtnyv9kh2uewd9hj7ffjxpmhxue69uhhyetvv9ujuumwdae8gtnnda3kjctv9uu3yrht" target="_blank">Liberty Farmer</a><br>
+                Funded by OpenSats | Open Source MIT License<br>
+                <span style="font-size: 0.8rem; opacity: 0.7;">NOSTR Over Ham Radio - Unstoppable Communications</span>
+            </p>
+        </div>
+    </footer>
+
+    <!-- Simple mobile menu toggle -->
+    <script>
+        document.querySelector('.mobile-menu-btn').addEventListener('click', function() {
+            document.querySelector('.nav-links').classList.toggle('active');
+        });
+
+        // Close mobile menu when clicking a link
+        document.querySelectorAll('.nav-links a').forEach(link => {
+            link.addEventListener('click', function() {
+                document.querySelector('.nav-links').classList.remove('active');
+            });
+        });
+
+        // Smooth scroll with offset for fixed header
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    window.scrollTo({
+                        top: target.offsetTop - 80,
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
