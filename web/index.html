@@ -748,11 +748,34 @@
 
             .hero {
                 margin-top: 60px;
-                min-height: 400px;
+                min-height: auto;
+                flex-direction: column;
+            }
+
+            .hero-image {
+                width: 100%;
+                height: auto;
             }
 
             .hero-content {
-                bottom: 1rem;
+                position: relative;
+                bottom: auto;
+                left: auto;
+                transform: none;
+                padding: 2rem 1rem;
+                width: 100%;
+            }
+
+            .hero-cta {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .btn-primary,
+            .btn-secondary {
+                width: 100%;
+                padding: 1rem 1.5rem;
+                font-size: 1rem;
             }
 
             .section-title {
