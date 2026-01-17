@@ -481,36 +481,56 @@ try:
 except:
     SERVER_VARA_POST_PTT_DELAY = 0.1
 
-# NEW: Reticulum settings (with safe defaults)
-try:
-    RETICULUM_INTERFACE_TYPE = config.get('RETICULUM', 'interface_type', fallback='kiss')
-    RETICULUM_KISS_PORT = config.getint('RETICULUM', 'kiss_port', fallback=7300)
-    RETICULUM_KISS_HOST = config.get('RETICULUM', 'kiss_host', fallback='localhost')
-    RETICULUM_CONFIG_PATH = config.get('RETICULUM', 'reticulum_config_path', fallback='~/.reticulum')
-    RETICULUM_ANNOUNCE_INTERVAL = config.getint('RETICULUM', 'announce_interval', fallback=300)
-    RETICULUM_HOP_COUNT = config.getint('RETICULUM', 'hop_count', fallback=4)
-    RETICULUM_IDENTITY_FILE = config.get('RETICULUM', 'identity_file', fallback='reticulum_identity')
-except:
-    # Fallback values if RETICULUM section doesn't exist
-    RETICULUM_INTERFACE_TYPE = 'kiss'
-    RETICULUM_KISS_PORT = 7300
-    RETICULUM_KISS_HOST = 'localhost'
-    RETICULUM_CONFIG_PATH = '~/.reticulum'
-    RETICULUM_ANNOUNCE_INTERVAL = 300
-    RETICULUM_HOP_COUNT = 4
-    RETICULUM_IDENTITY_FILE = 'reticulum_identity'
+# Reticulum Backend Configuration Settings
+# Add these to backend/config.py after the VARA settings section
 
-# NEW: FLDIGI settings (with safe defaults)
+# ===================================================================
+# RETICULUM SETTINGS
+# ===================================================================
+
+# Shared settings
 try:
-    FLDIGI_KISS_PORT = config.getint('FLDIGI', 'kiss_port', fallback=7342)
-    FLDIGI_MODE = config.get('FLDIGI', 'mode', fallback='psk31')
-    FLDIGI_ARQ_ENABLED = config.getboolean('FLDIGI', 'arq_enabled', fallback=False)
-    FLDIGI_TIMING_MULTIPLIER = config.getfloat('FLDIGI', 'timing_multiplier', fallback=2.0)
-    FLDIGI_CONNECTION_TIMEOUT = config.getint('FLDIGI', 'connection_timeout', fallback=45)
+    RETICULUM_CONFIG_DIR = config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
 except:
-    # Fallback values if FLDIGI section doesn't exist
-    FLDIGI_KISS_PORT = 7342
-    FLDIGI_MODE = 'psk31'
-    FLDIGI_ARQ_ENABLED = False
-    FLDIGI_TIMING_MULTIPLIER = 2.0
-    FLDIGI_CONNECTION_TIMEOUT = 45
+    RETICULUM_CONFIG_DIR = None
+
+# Client Reticulum settings
+try:
+    RETICULUM_HAMSTR_SERVER_HASH = client_config.get('RETICULUM', 'hamstr_server_hash', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_HASH = None
+
+try:
+    RETICULUM_HAMSTR_SERVER_PUBKEY = client_config.get('RETICULUM', 'hamstr_server_pubkey', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_PUBKEY = None
+
+try:
+    RETICULUM_HAMSTR_SERVER_GRID = client_config.get('RETICULUM', 'hamstr_server_grid', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_GRID = None
+
+try:
+    RETICULUM_CONNECTION_TIMEOUT = client_config.getint('RETICULUM', 'connection_timeout', fallback=60)
+except:
+    RETICULUM_CONNECTION_TIMEOUT = 60
+
+try:
+    RETICULUM_KEEPALIVE_INTERVAL = client_config.getint('RETICULUM', 'keepalive_interval', fallback=0)
+except:
+    RETICULUM_KEEPALIVE_INTERVAL = 0
+
+# Server Reticulum settings
+try:
+    RETICULUM_SERVER_GRID = server_config.get('RETICULUM', 'server_grid', fallback=None)
+except:
+    RETICULUM_SERVER_GRID = None
+
+try:
+    RETICULUM_ANNOUNCE_INTERVAL = server_config.getint('RETICULUM', 'announce_interval', fallback=21600)
+except:
+    RETICULUM_ANNOUNCE_INTERVAL = 21600
+
+# Note: Transport configuration (TCP, LoRa, KISS TNC, etc.) is handled 
+# by Reticulum's own config files in ~/.reticulum/ or custom reticulum_config_dir
+# HAMSTR does not need to configure transport details

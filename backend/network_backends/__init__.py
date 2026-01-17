@@ -42,7 +42,7 @@ except ImportError as e:
     import logging
     logging.warning(f"[BACKENDS] PacketBackend not available: {e}")
 
-# VARA Backend - NEW!
+# VARA Backend
 try:
     from .vara_backend import VARABackend
     VARA_AVAILABLE = True
@@ -51,21 +51,22 @@ except ImportError as e:
     import logging
     logging.warning(f"[BACKENDS] VARABackend not available: {e}")
 
-# Future backends - commented out until implemented
-# try:
-#     from .reticulum_backend import ReticulumBackend
-#     RETICULUM_AVAILABLE = True
-# except ImportError:
-#     RETICULUM_AVAILABLE = False
+# Reticulum Backend - NEW!
+try:
+    from .reticulum_backend import ReticulumBackend
+    RETICULUM_AVAILABLE = True
+except ImportError as e:
+    RETICULUM_AVAILABLE = False
+    import logging
+    logging.warning(f"[BACKENDS] ReticulumBackend not available: {e}")
 
+# Future backends
 # try:
 #     from .fldigi_backend import FLDIGIBackend
 #     FLDIGI_AVAILABLE = True
 # except ImportError:
 #     FLDIGI_AVAILABLE = False
 
-# These will be uncommented as we add each backend
-RETICULUM_AVAILABLE = False
 FLDIGI_AVAILABLE = False
 
 # Export main interface

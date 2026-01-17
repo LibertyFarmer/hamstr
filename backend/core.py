@@ -105,7 +105,15 @@ class Core:
     def start(self):
         if self.use_backend_system:
             # Backend system - no TNC startup needed
-            logging.info("[CORE] Backend system ready - VARA will connect on-demand")
+            backend_name = "Backend"
+            if hasattr(self, 'backend_manager') and self.backend_manager:
+                try:
+                    backend_type = self.backend_manager.get_backend_type()
+                    backend_name = backend_type.value.upper()
+                except:
+                    pass
+            
+            logging.info(f"[CORE] {backend_name} backend ready")
             return True
         else:
             # Legacy system - start TNC connection

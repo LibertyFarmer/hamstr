@@ -38,12 +38,22 @@ ptt_method = BOTH
 pre_ptt_delay = 0.1
 post_ptt_delay = 0.1
 
-# Reticulum Server Settings (When Using Reticulum)
+# Reticulum Server Settings (when using Reticulum backend)
 [RETICULUM]
-# Server-specific Reticulum interface  
-# interface_path = /dev/ttyUSB1
-# node_identity_file = server_identity
-# announce_as_server = true
+# Optional: Your server's grid square (metadata only, for directory listings)
+# This is NOT used to create the server identity/destination
+# Example: DM34, FN42, etc.
+# server_grid = 
+
+# Announce interval (seconds) - how often to broadcast server presence
+# This allows multi-hop routing via RNodes that hear announcements
+# Production recommended: 21600 (6 hours)
+# Testing: 300 (5 minutes)
+announce_interval = 21600
+
+# Reticulum config directory (optional)
+# If not specified, uses ~/.reticulum_server
+# reticulum_config_dir =
 
 # FLDIGI Server Settings (When using FLDIGI)
 [FLDIGI]

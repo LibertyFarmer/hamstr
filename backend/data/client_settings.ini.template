@@ -45,9 +45,32 @@ post_ptt_delay = 0.1
 
 # Reticulum Client Settings (when using Reticulum backend)
 [RETICULUM]
-# Client-specific Reticulum interface
-# interface_path = /dev/ttyUSB0
-# node_identity_file = client_identity
+# REQUIRED: Destination hash of HAMSTR server
+# Get this from the server operator or HAMSTR directory
+# Example: 02cbb0ceb2dd0117eeace98321a07b4c
+hamstr_server_hash = 
+
+# REQUIRED: Server's public key (hex string)
+# Get this from the server operator or HAMSTR directory
+# Example: a3f8d2e1c4b5a7f9d3e2c1b4d6f8a9c3e5d7f9b1a3c5e7d9f1b3a5c7e9f1b3a5
+hamstr_server_pubkey = 
+
+# Optional: Grid square (metadata only, for your reference)
+# hamstr_server_grid = 
+
+# Connection timeout (seconds) - adjust based on your transport
+# TCP (testing): 10-30 seconds
+# LoRa: 30-60 seconds  
+# Multi-hop mesh: 60-300 seconds
+connection_timeout = 60
+
+# Keep-alive interval (seconds) - 0 to disable
+keepalive_interval = 0
+
+# Reticulum config directory (optional)
+# If not specified, uses ~/.reticulum
+# reticulum_config_dir =
+
 
 # FLDIGI Client Settings (when using FLDIGI)
 [FLDIGI]
