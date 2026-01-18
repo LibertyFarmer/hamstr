@@ -482,17 +482,22 @@ except:
     SERVER_VARA_POST_PTT_DELAY = 0.1
 
 # Reticulum Backend Configuration Settings
-# Add these to backend/config.py after the VARA settings section
 
 # ===================================================================
 # RETICULUM SETTINGS
 # ===================================================================
 
-# Shared settings
+# Client Reticulum config directory
 try:
-    RETICULUM_CONFIG_DIR = config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
+    RETICULUM_CONFIG_DIR = client_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
 except:
     RETICULUM_CONFIG_DIR = None
+
+# Server Reticulum config directory
+try:
+    RETICULUM_SERVER_CONFIG_DIR = server_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
+except:
+    RETICULUM_SERVER_CONFIG_DIR = None
 
 # Client Reticulum settings
 try:
