@@ -52,11 +52,13 @@ class ReticulumSession:
         self._receive_event = threading.Event()
         self._lock = threading.Lock()
         
+        # Resource handling attributes
+        self._incoming_resource = None
+        self._resource_data = None
+        self._resource_complete_event = threading.Event()
+        
         # Legacy compatibility attributes that HAMSTR expects
-        self.id = f"reticulum-{remote_grid}"
-
-        # Have to add Dummy callsign for legacy compatibility
-
+        self.id = f"reticulum-{link.hash[:8]}"
         self.remote_callsign = ("RETICULUM", 0)  
         
         # Additional legacy compatibility
@@ -64,6 +66,22 @@ class ReticulumSession:
         self.state = ModemState.CONNECTED
         
         logging.info(f"[RETICULUM_SESSION] Created session for {remote_grid}")
+    
+    def on_incoming_resource(self, resource):
+        """Callback when a Resource arrives - accept and store it"""
+        with self._lock:
+            logging.info(f"[RETICULUM_SESSION] Incoming Resource: {resource.size} bytes")
+            self._incoming_resource = resource
+            # Accept the resource
+            resource.accept()
+    
+    def on_resource_concluded(self, resource):
+        """Callback when Resource transfer completes"""
+        with self._lock:
+            logging.info(f"[RETICULUM_SESSION] Resource transfer complete")
+            # Get the data from the Resource
+            self._resource_data = resource.data.read()
+            self._resource_complete_event.set()
     
     def update_activity(self):
         """Update last activity timestamp"""
@@ -81,8 +99,19 @@ class ReticulumSession:
             self._receive_buffer.extend(data)
             self._receive_event.set()
     
+    def get_resource_data(self, timeout: float) -> Optional[bytes]:
+        """Wait for and retrieve Resource data"""
+        if self._resource_complete_event.wait(timeout):
+            with self._lock:
+                data = self._resource_data
+                self._resource_data = None
+                self._resource_complete_event.clear()
+                self._incoming_resource = None
+                return data
+        return None
+    
     def get_received_data(self, timeout: float) -> Optional[bytes]:
-        """Wait for and retrieve received data"""
+        """Wait for and retrieve received packet data"""
         if self._receive_event.wait(timeout):
             with self._lock:
                 data = bytes(self._receive_buffer)
@@ -371,8 +400,13 @@ class ReticulumBackend(NetworkBackend):
             # Set packet callback for this link
             link.set_packet_callback(self._server_packet_received)
             
+            # Set unified Resource callbacks (handle both incoming and outgoing)
+            link.set_resource_started_callback(self._unified_resource_started)
+            link.set_resource_callback(self._on_resource_progress)
+            link.set_resource_concluded_callback(self._unified_resource_concluded)
+            
             # Create session for this incoming Link
-            session = ReticulumSession(link, "CLIENT")  # Use "CLIENT" as remote_grid placeholder
+            session = ReticulumSession(link, "CLIENT")
             
             # Store session
             with self._session_lock:
@@ -640,12 +674,19 @@ class ReticulumBackend(NetworkBackend):
                 link.teardown()
                 return None
             
-            # Create session
+              # Create session
             print("[DEBUG] Creating session...")
             session = ReticulumSession(link, server_hash[:16])
             
             # Set packet callback for receiving data
             link.set_packet_callback(self._client_packet_received)
+            
+            # Set unified Resource callbacks (handle both incoming and outgoing)
+            link.set_resource_started_callback(self._unified_resource_started)
+            link.set_resource_callback(self._on_resource_progress)
+            link.set_resource_concluded_callback(self._unified_resource_concluded)
+            print("[DEBUG] Resource callbacks configured")
+
             
             # Store session
             with self._session_lock:
@@ -655,7 +696,10 @@ class ReticulumBackend(NetworkBackend):
             print(f"[DEBUG] Session created: {session_key}")
             logging.info(f"[RETICULUM_BACKEND] Connection established to server")
             self.status = BackendStatus.CONNECTED
-            
+            print(f"[DEBUG] About to return session: {session}")
+            print(f"[DEBUG] Session connected: {session.connected}")
+            print(f"[DEBUG] Session link status: {session.link.status}")
+            sys.stdout.flush()
             return session
             
         except Exception as e:
@@ -687,14 +731,11 @@ class ReticulumBackend(NetworkBackend):
             logging.error(f"[RETICULUM_BACKEND] Packet received error: {e}")
     
     def send_data(self, session: ReticulumSession, data: bytes) -> bool:
+        print(f"\n[DEBUG] ========== send_data CALLED! data_size={len(data)} ==========")
         """
         Send raw application data to remote station.
         
-        This is our CUSTOM method that wraps Reticulum's packet sending:
-        - Creates RNS.Packet with data
-        - Sends via packet.send()
-        - Reticulum automatically handles Resources for large transfers
-        - Progress tracking via Resource callbacks
+        Automatically uses Resources for data that would exceed MTU after encryption overhead.
         
         Args:
             session: Active Reticulum session
@@ -715,24 +756,32 @@ class ReticulumBackend(NetworkBackend):
             data_size = len(data)
             logging.info(f"[RETICULUM_BACKEND] Sending {data_size} bytes")
             socketio_logger.info(f"[RETICULUM] Sending request ({data_size} bytes)...")
+
+
+            # Reticulum MTU is 500 bytes! 
+            # MUST Resources for anything >400 bytes to be safe for RN after encryption
+            MTU_THRESHOLD = 400
             
-            # Set Resource callbacks for progress tracking
-            # These will be called automatically if data >8KB triggers Resource
-            session.link.set_resource_started_callback(self._on_resource_started)
-            session.link.set_resource_callback(self._on_resource_progress)
-            session.link.set_resource_concluded_callback(self._on_resource_concluded)
+            if data_size > MTU_THRESHOLD:
+                # Use Resource for larger data to avoid MTU errors
+                logging.info(f"[RETICULUM_BACKEND] Data size {data_size} > {MTU_THRESHOLD} bytes, using Resource")
+                socketio_logger.info(f"[RETICULUM] Using Resource transfer for {data_size} bytes...")
+                
+                # Create Resource - it transfers asynchronously in the background
+                # Don't wait for it - Reticulum handles everything automatically
+                resource = RNS.Resource(data, session.link)
+                
+                logging.info("[RETICULUM_BACKEND] Resource created, transferring in background")
+                # Resource will trigger callbacks as it progresses
+                # The receive side will automatically reassemble it
+            else:
+                # Small data - send as regular packet
+                logging.info(f"[RETICULUM_BACKEND] Data size {data_size} <= {MTU_THRESHOLD} bytes, using Packet")
+                packet = RNS.Packet(session.link, data)
+                packet.send()
+                logging.info("[RETICULUM_BACKEND] Packet sent successfully")
             
-            # Create and send packet (Reticulum's pattern)
-            # RNS will automatically use Resources if data is large
-            packet = RNS.Packet(session.link, data)
-            packet.send()
-            
-            logging.info("[RETICULUM_BACKEND] Packet sent successfully")
             session.update_activity()
-            
-            # Note: For large transfers, Resource callbacks will provide progress
-            # For small transfers, this completes immediately
-            
             return True
             
         except Exception as e:
@@ -750,6 +799,43 @@ class ReticulumBackend(NetworkBackend):
             socketio_logger.info(f"[RETICULUM] Transferring {total_size} bytes...")
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Resource started callback error: {e}")
+
+    def _unified_resource_started(self, resource):
+        """Unified callback for Resource start - handles both incoming and outgoing"""
+        try:
+            total_size = resource.total_size
+            logging.info(f"[RETICULUM_BACKEND] Resource transfer started: {total_size} bytes")
+            socketio_logger.info(f"[RETICULUM] Transferring {total_size} bytes...")
+            
+            # If this is an incoming Resource, find the session and accept it
+            link = resource.link
+            with self._session_lock:
+                for session in self._active_sessions.values():
+                    if session.link == link:
+                        # This is an incoming Resource - accept it
+                        session.on_incoming_resource(resource)
+                        return
+                        
+        except Exception as e:
+            logging.error(f"[RETICULUM_BACKEND] Resource started callback error: {e}")
+    
+    def _unified_resource_concluded(self, resource):
+        """Unified callback for Resource complete - handles both incoming and outgoing"""
+        try:
+            logging.info(f"[RETICULUM_BACKEND] Resource transfer complete")
+            socketio_logger.info(f"[RETICULUM] Transfer complete")
+            
+            # If this is an incoming Resource, store the data in the session
+            link = resource.link
+            with self._session_lock:
+                for session in self._active_sessions.values():
+                    if session.link == link:
+                        # This is an incoming Resource - store data
+                        session.on_resource_concluded(resource)
+                        return
+                        
+        except Exception as e:
+            logging.error(f"[RETICULUM_BACKEND] Resource concluded callback error: {e}")
     
     def _on_resource_progress(self, resource):
         """Callback for transfer progress updates"""
@@ -777,8 +863,7 @@ class ReticulumBackend(NetworkBackend):
         """
         Receive raw application data from remote station.
         
-        Waits for packet callback to populate the receive buffer,
-        then returns the data.
+        Handles BOTH regular Packets and Resources automatically.
         
         Args:
             session: Active Reticulum session
@@ -795,18 +880,32 @@ class ReticulumBackend(NetworkBackend):
             logging.info(f"[RETICULUM_BACKEND] Waiting for data (timeout: {timeout}s)...")
             socketio_logger.info("[RETICULUM] Waiting for response...")
             
-            # Wait for data via the session's event-based system
-            data = session.get_received_data(timeout)
+            # Try to receive EITHER a packet OR a resource
+            # Check both in quick succession
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                remaining = timeout - (time.time() - start_time)
+                check_timeout = min(0.5, remaining)  # Check every 0.5 seconds
+                
+                # Check packet data first (most common, faster)
+                packet_data = session.get_received_data(check_timeout)
+                if packet_data:
+                    logging.info(f"[RETICULUM_BACKEND] Received Packet: {len(packet_data)} bytes")
+                    socketio_logger.info(f"[RETICULUM] Response received ({len(packet_data)} bytes)")
+                    session.update_activity()
+                    return packet_data
+                
+                # Check resource data
+                resource_data = session.get_resource_data(check_timeout)
+                if resource_data:
+                    logging.info(f"[RETICULUM_BACKEND] Received Resource: {len(resource_data)} bytes")
+                    socketio_logger.info(f"[RETICULUM] Response received ({len(resource_data)} bytes)")
+                    session.update_activity()
+                    return resource_data
             
-            if data:
-                logging.info(f"[RETICULUM_BACKEND] Received {len(data)} bytes")
-                socketio_logger.info(f"[RETICULUM] Response received ({len(data)} bytes)")
-                session.update_activity()
-                return data
-            else:
-                logging.warning(f"[RETICULUM_BACKEND] Receive timeout after {timeout}s")
-                socketio_logger.error("[RETICULUM] Receive timeout")
-                return None
+            logging.warning(f"[RETICULUM_BACKEND] Receive timeout after {timeout}s")
+            socketio_logger.error("[RETICULUM] Receive timeout")
+            return None
                 
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Receive error: {e}")
