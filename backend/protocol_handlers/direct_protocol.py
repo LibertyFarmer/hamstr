@@ -59,7 +59,7 @@ class DirectProtocol(ProtocolHandler):
         """Send NOSTR request directly as JSON."""
         try:
             json_data = json.dumps(request_data).encode('utf-8')
-            request_type = request_data.get('type', 'UNKNOWN')
+            request_type = request_data.get('type', 'Response Packet')
             
             if 'data' in request_data:
                 socketio_logger.info(f"[CONTROL] Sending response")

@@ -340,7 +340,7 @@ class Server:
     
         try:
             import websockets
-            import json
+          #  import json
             import asyncio
             import secrets
             
@@ -498,6 +498,11 @@ class Server:
 
     def handle_connected_session(self, session):
         logging.info(f"Handling session for {session.remote_callsign}")
+
+        logging.info(f"[DEBUG] Has protocol_manager: {hasattr(self.core, 'protocol_manager')}")
+        if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
+            logging.info(f"[DEBUG] Protocol type: {self.core.protocol_manager.get_protocol_type()}")
+        logging.info(f"[DEBUG] Backend type: {self.core.backend_manager.get_backend_type() if self.core.backend_manager else 'None'}")
         
         # NEW: DirectProtocol path (VARA, Reticulum)
         if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
@@ -566,12 +571,18 @@ class Server:
                                 note_content = request_data.get('content')
                                 
                                 if note_content:
-                                    self.process_note(note_content)
-                                    response_data = {'success': True, 'message': 'Note published'}
+                                    # Process and get actual publish result
+                                    publish_success = self.process_note(note_content)
+                                    
+                                    # Send actual result to client
+                                    response_data = {
+                                        'success': publish_success,
+                                        'message': 'Note published successfully' if publish_success else 'Failed to publish note to relays'
+                                    }
                                     success = self.core.protocol_manager.send_nostr_request(session, response_data)
                                     
                                     if success:
-                                        logging.info("[SERVER] Note published, confirmation sent")
+                                        logging.info(f"[SERVER] Note publish result sent: {publish_success}")
                                     else:
                                         logging.error("[SERVER] Failed to send note confirmation")
                                 else:
@@ -586,7 +597,7 @@ class Server:
                                 
                                 if zap_note_json:
                                     try:
-                                        import json
+                                      #  import json
                                         import asyncio
                                         
                                         # Parse JSON string if needed
@@ -837,7 +848,7 @@ class Server:
                             
                             # Parse response for logging
                             try:
-                                import json
+                              #  import json
                                 response_data = json.loads(response)
                                 if isinstance(response_data, dict) and 'events' in response_data:
                                     note_count = len(response_data['events'])
@@ -849,7 +860,7 @@ class Server:
                             
                             if self.core.send_response(session, response):
                                 logging.info("Response sent successfully")
-                                continue
+                                break
                             else:
                                 logging.error("Failed to send response")
                         except Exception as e:
@@ -1093,12 +1104,39 @@ class Server:
                 logging.info("Received DONE from client")
                 if is_note:
                     if len(received_packets) == total_packets:
+                        # Step 1: Send DONE_ACK to confirm we got all packets
                         self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                         logging.info("Sent DONE_ACK to client for NOTE")
+                        
+                        # Step 2: Process and publish the note
                         full_note = self.reassemble_note(received_packets)
-                        self.process_note(full_note)
-                        logging.info("Waiting for client to initiate disconnect")
-                        is_note = False  # Reset the flag to prevent reprocessing
+                        publish_success = self.process_note(full_note)
+                        
+                        # Step 3: Send response back to client about publish success/failure
+                        logging.info("Sending note publication result to client")
+                        
+                    #    import json
+                        if publish_success:
+                            response = json.dumps({
+                                "success": True,
+                                "message": "Note published successfully"
+                            })
+                        else:
+                            response = json.dumps({
+                                "success": False,
+                                "message": "Failed to publish note to relays"
+                            })
+                        
+                        # Send response using existing system (RESPONSE packets + DONE)
+                        if self.core.send_response(session, response):
+                            logging.info(f"Note publication result sent: {publish_success}")
+                            # DON'T BREAK! Stay in loop to receive DISCONNECT from client
+                            is_note = False  # Reset flag
+                            # Loop will continue and receive DISCONNECT next
+                        else:
+                            logging.error("Failed to send note publication confirmation")
+                            break  # Only break if sending response fails
+                        
                     else:
                         logging.warning("Received DONE but not all packets are present. Requesting missing packets.")
                         missing_packets = self.check_missing_packets(received_packets, total_packets)
@@ -1107,6 +1145,7 @@ class Server:
                     # This is the case when client is sending DONE for other message types
                     self.core.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                     logging.info("Sent DONE_ACK to client for non-NOTE message")
+                    
             elif msg_type == MessageType.DONE_ACK:
                 logging.info(f"Received DONE_ACK from {source_callsign}")
                 
@@ -1165,7 +1204,7 @@ class Server:
         return ''.join(received_packets[i] for i in sorted(received_packets.keys()))
 
     def process_note(self, note):
-        """Process and publish note to NOSTR network."""
+        """Process and publish note to NOSTR network. Returns success status."""
         logging.info("Processing received note")
         try:
             decompressed_note = decompress_nostr_data(note)
@@ -1176,18 +1215,22 @@ class Server:
             if note_type != NoteType.STANDARD:
                 if not note_data.get('reply_to') or not note_data.get('reply_pubkey'):
                     logging.error("Missing required reply metadata")
-                    return
+                    return False
             
             success = publish_note(decompressed_note)
             if success:
                 logging.info(f"{note_type.name} note published successfully")
+                return True
             else:
                 logging.error(f"Failed to publish {note_type.name} note")
+                return False
                 
         except json.JSONDecodeError as e:
             logging.error(f"Error decoding note JSON: {e}")
+            return False
         except Exception as e:
             logging.error(f"Error processing note: {e}")
+            return False
 
     def reassemble_note(self, received_packets):
         return ''.join(received_packets[i] for i in sorted(received_packets.keys()))

@@ -1241,9 +1241,6 @@ def send_zap():
                     socketio_logger.error(f"[CLIENT] Unable to connect to {server_callsign[0]}-{server_callsign[1]}")
                     result_container[0] = {"success": False, "message": f"Unable to connect to {server_callsign[0]}-{server_callsign[1]}"}
                     return
-
-                # Log successful connection
-                socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
                 
                 # Detect protocol type
                 protocol_type = 'PacketProtocol'  # Default

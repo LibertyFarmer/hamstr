@@ -48,10 +48,7 @@ class Client:
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-            # Log connection
-            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
-            
-            # Add stabilization delay only for PacketProtocol (DirectProtocol doesn't need it)
+            # Add stabilization delay only for PacketProtocol
             if not hasattr(self.core, 'protocol_manager') or \
             self.core.protocol_manager.get_protocol_type() == 'PacketProtocol':
                 time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
@@ -253,15 +250,12 @@ class Client:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False
-            
-            # Log connection
-            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
         
         try:
             socketio_logger.info("[CLIENT] Sending note")
             logging.info("Sending note")
             
-            # Route through protocol layer if available
+            # Route through protocol layer
             if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
                 socketio_logger.info("[CLIENT] Using protocol layer for note")
                 
@@ -269,54 +263,42 @@ class Client:
                 success = self.core.protocol_manager.send_nostr_request(self.session, note_data)
                 
                 if success:
-                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
-                    if response and response.get('success'):
-                        socketio_logger.info("[CLIENT] Note Published!")
+                    # Wait for server response about publish success/failure
+                    socketio_logger.info("[CLIENT] Waiting for publish confirmation from server")
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=180)
+                    
+                    if response:
+                        # Parse the response
+                        response_data = response.get('data', '')
                         
-                        protocol = self.core.protocol_manager
-                        
-                        # Send DONE
-                        socketio_logger.info("[CONTROL] Sending DONE")
-                        protocol.send_control_message(self.session, 'DONE')
-                        
-                        # Wait for DONE_ACK
-                        socketio_logger.info("[CONTROL] Waiting for DONE_ACK")
-                        done_ack = protocol.receive_nostr_response(self.session, timeout=15)
-                        if done_ack and done_ack.get('type') == 'DONE_ACK':
-                            socketio_logger.info("[CONTROL] Received DONE_ACK")
+                        if response_data:
+                            try:
+                                parsed_response = json.loads(response_data)
+                                if parsed_response.get('success'):
+                                    socketio_logger.info("[CLIENT] Note Published!")
+                                    logging.info("Note published successfully")
+                                    return True
+                                else:
+                                    error_msg = parsed_response.get('message', 'Unknown error')
+                                    socketio_logger.error(f"[CLIENT] Failed to publish note: {error_msg}")
+                                    logging.error(f"Failed to publish note: {error_msg}")
+                                    return False
+                            except json.JSONDecodeError:
+                                socketio_logger.error("[CLIENT] Invalid response from server")
+                                return False
                         else:
-                            socketio_logger.warning("[CONTROL] No DONE_ACK received")
-                        
-                        time.sleep(1)  # Brief pause
-                        
-                        # Send DISCONNECT (don't wait for ACK - connection will close)
-                        socketio_logger.info("[CONTROL] Sending DISCONNECT")
-                        protocol.send_control_message(self.session, 'DISCONNECT')
-                        socketio_logger.info("[CONTROL] Disconnect signal sent")
-                        
-                        time.sleep(2)  # Give it time to transmit
-                        return True
+                            socketio_logger.error("[CLIENT] Empty response from server")
+                            return False
                     else:
-                        socketio_logger.error("[CLIENT] Failed to publish note")
+                        socketio_logger.error("[CLIENT] No response from server")
                         return False
                 else:
+                    socketio_logger.error("[CLIENT] Failed to send note")
                     return False
-            
             else:
-                # FALLBACK: Old packet system (before protocol manager was added)
-                if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
-                    socketio_logger.error("Failed to establish READY state")
-                    return False
-                if not self.core.send_note(self.session, note):
-                    socketio_logger.error("[SYSTEM] Failed to send note")
-                    return False
-                response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
-                if response:
-                    socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
-                    return True
-                else:
-                    socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
-                    return False
+                # Fallback to legacy system (shouldn't happen)
+                socketio_logger.error("[CLIENT] Protocol manager not available")
+                return False
         
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] An error occurred during note sending: {e}")

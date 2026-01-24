@@ -199,6 +199,11 @@ class ConnectionManager:
 
     def handle_disconnect_request(self, session):
         """Handle a DISCONNECT request from the client."""
+        # Ignore DISCONNECT if server is shutting down
+        if not self.core.running:
+            logging.info(f"Ignoring DISCONNECT during shutdown from {session.remote_callsign if session else 'unknown'}")
+            return False
+            
         if session and session.state in [ModemState.CONNECTED, ModemState.DISCONNECTING]:
             logging.info(f"Handling DISCONNECT request from {session.remote_callsign}")
             socketio_logger.info(f"[CONTROL] Received DISCONNECT message from {session.remote_callsign}")
@@ -214,7 +219,10 @@ class ConnectionManager:
                 # Clean up anyway
                 self.cleanup_session(session)
                 return False
-        return False
+        else:
+            # Session is not in a valid state to handle DISCONNECT
+            logging.info(f"Ignoring DISCONNECT from {session.remote_callsign if session else 'unknown'} - session not active")
+            return False
 
     def handle_disconnect(self, session):
         """Handle a disconnect for a session."""
@@ -222,6 +230,8 @@ class ConnectionManager:
         self.cleanup_session(session)
 
     def handle_incoming_connection(self):
+        from protocol_utils import parse_callsign  # Add this import
+        
         connection_attempt_time = None
         current_connect_session = None
         
@@ -251,7 +261,11 @@ class ConnectionManager:
                 if source_callsign and msg_type == MessageType.CONNECT:
                     socketio_logger.info(f"[CONTROL] Received CONNECT request from {source_callsign}")
                     logging.info(f"Received CONNECT request from {source_callsign}")
-                    session = self.create_session(source_callsign)
+                    
+                    # FIX: Parse callsign string into tuple before creating session
+                    remote_callsign = parse_callsign(source_callsign)
+                    
+                    session = self.create_session(remote_callsign)
                     if not session:
                         socketio_logger.error(f"[SYSTEM] Failed to create session for {source_callsign}")
                         logging.error(f"Failed to create session for {source_callsign}")
@@ -321,17 +335,15 @@ class ConnectionManager:
                             # If we received a DATA_REQUEST during handshake, store it in the session
                             if pending_request:
                                 session.pending_request = pending_request
-                                logging.info(f"Stored pending DATA_REQUEST for processing: {pending_request}")
                             
-                            # Clear connection tracking since we're fully connected now
+                            # Clear connection tracking
                             connection_attempt_time = None
                             current_connect_session = None
                             
                             return session
                         else:
-                            socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
-                            logging.error(f"Failed to receive ACK for CONNECT_ACK from {source_callsign}")
-                            # Mark this as a failed connection attempt and clean up
+                            socketio_logger.warning(f"[SYSTEM] Failed to establish connection with {source_callsign}")
+                            logging.warning(f"Failed to establish connection with {source_callsign}")
                             try:
                                 self.cleanup_session(session)
                             except Exception as e:
@@ -346,11 +358,10 @@ class ConnectionManager:
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
-                        # Clean up failed connection attempt
                         try:
                             self.cleanup_session(session)
                         except Exception as e:
-                            logging.error(f"Error during failed CONNECT_ACK cleanup: {e}")
+                            logging.error(f"Error during CONNECT_ACK failure cleanup: {e}")
                             # Force cleanup even if exception occurred
                             if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
                                 self.core.sessions.pop(session.id, None)
@@ -363,17 +374,20 @@ class ConnectionManager:
                     socketio_logger.info(f"[CONTROL] Received DATA_REQUEST from {source_callsign}")
                     logging.info(f"Received DATA_REQUEST from {source_callsign}")
                     
+                    # Parse callsign for comparison
+                    parsed_callsign = parse_callsign(source_callsign)
+                    
                     # Try to find an existing session for this callsign
                     session = None
                     for existing_session in self.core.sessions.values():
-                        if existing_session.remote_callsign == source_callsign:
+                        if existing_session.remote_callsign == parsed_callsign:
                             session = existing_session
                             break
                     
                     # If no session found, create a new one and mark as connected
                     if not session:
                         logging.info(f"Creating new session for previous callsign {source_callsign}")
-                        session = self.create_session(source_callsign)
+                        session = self.create_session(parsed_callsign)
                         if session:
                             session.state = ModemState.CONNECTED
                             session.last_activity = time.time()

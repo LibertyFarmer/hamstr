@@ -42,14 +42,10 @@ const logTranslations = {
   '\\[CONTROL\\] Sent DISCONNECT_ACK': 'Disconnect confirmed',
   '\\[CONTROL\\] Message received': 'Server response received',
   '\\[CONTROL\\] Message received via VARA': 'Server response received',
-  '\\[CONTROL\\] Sent DONE': 'Finalizing transmission...',
-  '\\[CONTROL\\] Sending DISCONNECT': 'Initiating disconnect...',
-  '\\[CONTROL\\] Sent DISCONNECT': 'Disconnect signal sent',
   '\\[CONTROL\\] No DONE_ACK received': 'Waiting for server acknowledgment...',
   '\\[CONTROL\\] No DISCONNECT_ACK received': 'Disconnect completed',
   '\\[CONTROL\\] Received DONE_ACK': 'Server acknowledged',
   '\\[CONTROL\\] Received DISCONNECT_ACK': 'Disconnect confirmed',
-  '\\[CONTROL\\] Sending DONE': 'Finalizing transmission...',
   '\\[CONTROL\\] Waiting for DONE_ACK': 'Waiting for server confirmation...',
   '\\[CONTROL\\] Disconnect signal sent': 'Disconnect complete',
   '\\[CONTROL\\] Sending response': 'Sending data...',
@@ -77,7 +73,6 @@ const logTranslations = {
   
   // Session Management
   '\\[SESSION\\] Client disconnect complete': 'Disconnected from server',
-  '\\[SESSION\\] Disconnecting session: [\\w-]+': 'Closing session...',
   '\\[SESSION\\] Client initiating disconnect \\[CLIENT_DISCONNECT\\]': 'Disconnecting from server',
   
   // Progress
@@ -107,7 +102,7 @@ const logTranslations = {
   '\\[CLIENT\\] Disconnect acknowledged by server': 'Server Disconnected',
   '\\[CONTROL\\] DISCONNECT ACK received': 'Disconnecting',
   '\\[CONTROL\\] Sending packet: Type=DISCONNECT, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Sending disconnect signal...',
-  '\\[CONTROL\\] Sending DISCONNECT for session: [\\w-]+': 'Closing connection...',
+  '\\[CONTROL\\] Sending DISCONNECT for session: [\\w-]+': 'Initiating disconnect...',
   
   // Note transmission related
   '\\[CLIENT\\] Attempting to send note to server': 'Starting note transmission...',
@@ -116,11 +111,13 @@ const logTranslations = {
   '\\[CLIENT\\] Creating signed note...': 'Signing Note',
   '\\[CLIENT\\] Note Published!': 'Note live on NOSTR!',
   '\\[CLIENT\\] Note compressed, preparing to send': 'Note signed, ready to send',
+  '\\[CLIENT\\] Waiting for publish confirmation from server': 'Waiting for server confirmation...',
   '\\[PACKET\\] Sending message: MessageType\\.NOTE to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
     return `Starting transmission.`;
   },
   
   // Zap Flow - Phase 1: Kind 9734 Zap Request
+  '\\[CLIENT\\] Using PacketProtocol for zap': 'Using Packet System for Zap',
   '\\[CLIENT\\] Sending kind 9734 zap note via ZAP_KIND9734_REQUEST': 'Sending Kind 9734 Zap Note',
   '\\[CLIENT\\] Preparing to send kind 9734 zap note: (\\d+) sats to ([^\\s]+)': (match) => {
     return `Preparing to send ${match[2]} ${match[1]} sats`;
@@ -135,11 +132,10 @@ const logTranslations = {
   '\\[CONTROL\\] Sending packet: Type=ZAP_KIND9734_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
     return `Sending Zap Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
   },
-  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
-    return `Zap Packet ${match[1]} confirmed`;
-  },
+ 
 
   // Zap Flow - Invoice Generation
+  '\\[CLIENT\\] Server not ready to send invoice': "Server can't send invoice",
   '\\[CLIENT\\] READY sent, waiting for invoice response': 'Generating Lightning invoice...',
   '\\[CLIENT\\] Invoice received, creating payment': 'Invoice received, preparing payment...',
 
@@ -213,18 +209,19 @@ const logTranslations = {
   },
   
   // Packet handling and progress
-  '\\[PACKET\\] DONE packet sent': 'Sending completion signal...',
-  '\\[CONTROL\\] Received DONE_ACK, note transmission complete': 'Note transmission complete!',
-  '\\[CONTROL\\] Sending packet: Type=DONE, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Finalizing transmission...',
-  '\\[CONTROL\\] Received DONE_ACK, ending transmission': 'Transmission complete',
-  '\\[CONTROL\\] Received control: Type=DONE_ACK, Content=DONE_ACK': 'Server acknowledged completion',
-  '\\[CONTROL\\] Sending packet: Type=ACK, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Acknowledging packet, waiting for server...',
-  '\\[CONTROL\\] Sending control: Type=ACK': 'Confirming receipt...',
-  '\\[CONTROL\\] Received control: Type=DONE, Content=DONE': 'Completing transmission...',
-  '\\[CONTROL\\] Received DONE message & all packets are accounted for': 'All packets received successfully',
+  '\\[CONTROL\\] Sending packet: Type=DONE, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Sending completion signal...',
+  '\\[CONTROL\\] Received control: Type=DONE, Content=DONE': 'Server completed transmission',
   '\\[CONTROL\\] Sending packet: Type=DONE_ACK, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Confirming completion...',
-  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK': 'Received acknowledgement',
-  '\\[SYSTEM\\] All packets successfully reassembled': 'All packets received and verified',
+  '\\[CONTROL\\] Received DONE_ACK, note transmission complete': 'Note transmission complete!',
+  '\\[CONTROL\\] Received DONE_ACK, ending transmission': 'Transmission complete',
+  '\\[CONTROL\\] Sending packet: Type=ACK, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Acknowledging packet...',
+  '\\[CONTROL\\] Sending control message: ACK': 'Confirming packet receipt...',
+  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+)': (match) => {
+    return `Packet ${match[1]} confirmed`;  },
+  '\\[CONTROL\\] Received DONE message & all packets are accounted for': 'All packets received',
+  '\\[SYSTEM\\] All packets successfully reassembled': 'All packets verified',
+  '\\[CONTROL\\] Received control: Type=DONE_ACK, Content=DONE_ACK': 'Server acknowledged completion',  
+  '\\[CONTROL\\] Sending control: Type=ACK': 'Confirming receipt...', 
   
   // Missing packets and retries
   '\\[CONTROL\\] Sending packet: Type=PKT_MISSING, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Requesting missing packets...',
@@ -272,6 +269,9 @@ const logTranslations = {
     return `Received Packet ${current} of ${total}`;
   },
   '\\[CONTROL\\] Sending packet: Type=RESPONSE, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
+    return `Sending Packet ${match[1].padStart(4, '0')} of ${match[2].padStart(4, '0')}`;
+  },
+  '\\[CONTROL\\] Sending packet: Type=RESPONSE, Seq=(\\d+)/(\\d+)': (match) => {
     return `Resending Packet ${match[1].padStart(4, '0')} of ${match[2].padStart(4, '0')}...`;
   },
   
@@ -289,7 +289,6 @@ const logTranslations = {
   
   // New translations for control messages
   '\\[CONTROL\\] Sending control message: DISCONNECT': 'Sending disconnect signal...',
-  '\\[CONTROL\\] Sending control message: ACK': 'Confirming packet receipt...',
   '\\[CONTROL\\] Sending control message: READY': 'Sending ready signal...',
   '\\[CONTROL\\] Sending control message: DONE': 'Sending completion signal...',
   '\\[CONTROL\\] Sending control message: DONE_ACK': 'Confirming operation complete...',
