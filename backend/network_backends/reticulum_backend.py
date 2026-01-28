@@ -641,7 +641,7 @@ class ReticulumBackend(NetworkBackend):
                 
                 # --- CRITICAL FIX: Window = 1 for LoRa Stability ---
                 # This forces Reticulum to wait for an ACK for every segment.
-                resource.window = 1
+                resource.window = 4
                 
                 # Set progress monitoring
                 # Note: These are set on the link for *incoming*, but here we just rely on Reticulum
@@ -732,8 +732,9 @@ class ReticulumBackend(NetworkBackend):
                 session.update_activity()
                 return data
             else:
-                logging.warning(f"[RETICULUM_BACKEND] Receive timeout after {timeout}s")
-                # socketio_logger.error("[RETICULUM] Receive timeout")
+                # CHANGE THIS BLOCK: Only log if timeout is > 1 second
+                if timeout > 1:
+                    logging.warning(f"[RETICULUM_BACKEND] Receive timeout after {timeout}s")
                 return None
                 
         except Exception as e:

@@ -49,6 +49,8 @@ class ConnectionManager:
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
         self.tnc_connection = None
+        self.current_session = None
+        self.status = ModemState.DISCONNECTED
         logging.debug(f"ConnectionManager initialized for {'server' if is_server else 'client'} [CM]")
 
     def _is_packet_protocol(self):
@@ -88,6 +90,34 @@ class ConnectionManager:
             logging.debug("ConnectionManager stopped [CM_STOP]")
 
     def connect(self, remote_callsign):
+        """Connect to remote station."""
+        if self.current_session:
+            logging.warning("[CONNECTION_MGR] Already connected")
+            return None # Return None on failure to match signature
+
+        # --- RETICULUM SAFEGUARD ---
+        # Detect if we are using Reticulum backend safely (no attribute guessing)
+        if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+            # We check the backend instance, not the manager, to avoid "No attribute" errors
+            backend = getattr(self.core.backend_manager, 'current_backend', None)
+            if backend and hasattr(backend, 'get_backend_type'):
+                # Check for Reticulum type (safe string check)
+                if 'RETICULUM' in str(backend.get_backend_type()):
+                    logging.info("[CONNECTION_MGR] Delegating to Reticulum Backend")
+                    socketio_logger.info("[CLIENT] Connecting to Reticulum Server...")
+                    
+                    # Delegate directly
+                    session = self.core.backend_manager.connect(remote_callsign)
+                    if session:
+                        self.current_session = session
+                        self.status = ModemState.CONNECTED
+                        # Ensure TNC ref is null/safe for legacy checks
+                        session.tnc_connection = None 
+                        return session
+                    return None
+        # ---------------------------
+
+        # STANDARD PACKET/VARA LOGIC
         if not self.start():
             socketio_logger.error("[TNC] Failed to start TNC connection")
             logging.error("Failed to start TNC connection")
@@ -115,6 +145,7 @@ class ConnectionManager:
                     
                     if self.core.send_ack(session):
                         session.state = ModemState.CONNECTED
+                        self.current_session = session # Track session
                         socketio_logger.info(f"[SESSION] CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         logging.info(f"CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         
@@ -174,6 +205,10 @@ class ConnectionManager:
             socketio_logger.info(f"[SESSION] Disconnecting session: {session.id}")
             logging.info(f"Disconnecting session: {session.id}")
             session.state = ModemState.DISCONNECTED
+            
+        # Clear current session if it matches
+        if self.current_session and session and self.current_session.id == session.id:
+            self.current_session = None
 
     def initiate_disconnect(self, session):
         """Initiate a disconnect for a session."""

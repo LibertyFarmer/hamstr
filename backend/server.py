@@ -521,7 +521,8 @@ class Server:
                             consecutive_timeouts = 0  # Reset counter
                         else:
                             consecutive_timeouts += 1
-                            if consecutive_timeouts >= 30:  # After 30 timeouts (30 seconds), break
+                            # INCREASED TO 180 (3 Minutes) for slow Reticulum Resource transfers
+                            if consecutive_timeouts >= 180:  
                                 logging.info("[SERVER] No activity, ending session")
                                 break
                             if not self.running:
@@ -547,9 +548,9 @@ class Server:
                                     protocol.send_control_message(session, 'DISCONNECT_ACK')
                                     
                                     # CRITICAL: Wait for VARA to finish transmitting DISCONNECT_ACK before closing socket
-                                    logging.info("[SERVER] Waiting for VARA to complete DISCONNECT_ACK transmission...")
                                     backend = getattr(self.core.backend_manager, '_backend', None)
                                     if backend and hasattr(backend, '_wait_for_vara_tx_complete'):
+                                        logging.info("[SERVER] Waiting for VARA to complete DISCONNECT_ACK transmission...")
                                         backend._wait_for_vara_tx_complete(timeout=30)
                                     
                                     logging.info("[SERVER] Clean disconnect completed")
@@ -753,12 +754,12 @@ class Server:
                                 logging.info("[SERVER] DirectProtocol response sent")
                                 
                                 # Wait for VARA to finish transmitting
-                                logging.info("[SERVER] Waiting for VARA to complete transmission...")
                                 backend = getattr(self.core.backend_manager, '_backend', None)
                                 if backend and hasattr(backend, '_wait_for_vara_tx_complete'):
+                                    logging.info("[SERVER] Waiting for VARA to complete transmission...")
                                     backend._wait_for_vara_tx_complete(timeout=120)
                                 else:
-                                    # Fallback for non-VARA backends
+                                    # Fallback for non-VARA backends (keep sleep for safety)
                                     time.sleep(1)
                                 
                                 protocol = self.core.protocol_manager

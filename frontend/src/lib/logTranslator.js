@@ -1,4 +1,9 @@
 const logTranslations = {
+  // --- NEW: Reticulum & Specific Overrides (Must come first!) ---
+  '\\[CLIENT\\] Connecting to Reticulum Server\\.\\.\\.': 'Connecting to Hamstr over Reticulum...',
+  '\\[SESSION\\] CONNECTED$': 'Connected to HAMSTR Server',
+  '\\[CLIENT\\] Waiting for publish confirmation\\.\\.\\.': 'Waiting for relay publishing...',
+
   // Connection related - DirectProtocol
   '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
     return `Attempting to connect to ${match[1]}...`;
@@ -111,7 +116,7 @@ const logTranslations = {
   '\\[CLIENT\\] Creating signed note...': 'Signing Note',
   '\\[CLIENT\\] Note Published!': 'Note live on NOSTR!',
   '\\[CLIENT\\] Note compressed, preparing to send': 'Note signed, ready to send',
-  '\\[CLIENT\\] Waiting for publish confirmation from server': 'Waiting for server confirmation...',
+  // REMOVED DUPLICATE: '\\[CLIENT\\] Waiting for publish confirmation from server': 'Waiting for server confirmation...',
   '\\[PACKET\\] Sending message: MessageType\\.NOTE to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
     return `Starting transmission.`;
   },
