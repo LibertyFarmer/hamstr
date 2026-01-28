@@ -765,7 +765,7 @@ class Server:
                                 
                                 # NEW: Wait for ACK from client
                                 logging.info("[SERVER] Waiting for ACK")
-                                if protocol.wait_for_control_message(session, 'ACK', timeout=30):
+                                if protocol.wait_for_control_message(session, 'ACK', timeout=120):
                                     logging.info("[SERVER] Received ACK")
                                     
                                     # 1. Send DONE
@@ -774,7 +774,7 @@ class Server:
                                     
                                     # 2. Wait for DONE_ACK
                                     logging.info("[SERVER] Waiting for DONE_ACK")
-                                    if protocol.wait_for_control_message(session, 'DONE_ACK', timeout=30):
+                                    if protocol.wait_for_control_message(session, 'DONE_ACK', timeout=60):
                                         
                                         # 3. Send DISCONNECT
                                         logging.info("[SERVER] Sending DISCONNECT to client")
@@ -782,7 +782,7 @@ class Server:
                                         
                                         # 4. Wait for DISCONNECT_ACK
                                         logging.info("[SERVER] Waiting for DISCONNECT_ACK")
-                                        protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=30)
+                                        protocol.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=60)
                                         
                                         logging.info("[SERVER] Clean disconnect completed")
                                         # Close and exit loop to go back to listening

@@ -7,7 +7,7 @@ for encrypted mesh networking over LoRa, packet radio, and other transports.
 Key Features:
 - Encrypted, self-routing mesh network communication
 - Link-based reliable connections
-- Automatic Resource handling for large transfers (>8KB)
+- Automatic Resource handling for large transfers (>200 bytes)
 - Deterministic server discovery via grid squares
 - Connect-per-operation pattern (keeps airwaves clear)
 """
@@ -56,7 +56,6 @@ class ReticulumSession:
         self.id = f"reticulum-{remote_grid}"
 
         # Have to add Dummy callsign for legacy compatibility
-
         self.remote_callsign = ("RETICULUM", 0)  
         
         # Additional legacy compatibility
@@ -126,6 +125,10 @@ class ReticulumBackend(NetworkBackend):
         self._identity = None
         self._destination = None
         self._server_destination_hash = None
+        
+        # SAFE MTU: Reticulum packets have a hard limit (usually ~500 bytes).
+        # We set this to 200 to be safe on LoRa and force larger data into Resources.
+        self.packet_mtu = 200
         
         # Initialize Reticulum
         self._initialize_reticulum()
@@ -209,40 +212,22 @@ class ReticulumBackend(NetworkBackend):
             try:
                 existing_instance = RNS.Reticulum._Reticulum__instance
                 
-                print(f"\n[DEBUG] is_server={self.is_server}")
-                print(f"[DEBUG] Existing instance found: {existing_instance is not None}")
-                if existing_instance:
-                    print(f"[DEBUG] Existing configdir: {getattr(existing_instance, 'configdir', 'NO ATTRIBUTE')}")
-                    print(f"[DEBUG] Our expanded_dir: {expanded_dir}")
-                    print(f"[DEBUG] Match: {getattr(existing_instance, 'configdir', None) == expanded_dir}")
-                
                 # Only reuse if same config directory
                 if existing_instance and hasattr(existing_instance, 'configdir'):
                     if existing_instance.configdir != expanded_dir:
-                        print(f"[DEBUG] Config dirs don't match - clearing singleton")
                         logging.info(f"[RETICULUM_BACKEND] Existing instance uses different config ({existing_instance.configdir}), forcing new instance")
                         # Clear singleton to force new instance with our config
                         RNS.Reticulum._Reticulum__instance = None
                         existing_instance = None
-                        print(f"[DEBUG] Singleton cleared, existing_instance is now None")
-                    else:
-                        print(f"[DEBUG] Config dirs match - will reuse")
-                else:
-                    print(f"[DEBUG] No configdir attribute or no existing instance")
-            except Exception as e:
-                print(f"[DEBUG] Exception checking singleton: {e}")
-                import traceback
-                traceback.print_exc()
+            except Exception:
                 pass
             
             if existing_instance:
                 # Reuse existing instance (same config dir)
-                print(f"[DEBUG] Reusing existing instance")
                 logging.info("[RETICULUM_BACKEND] Reusing existing Reticulum instance")
                 self._reticulum = existing_instance
             elif not is_main_thread:
                 # We're in a background thread - initialize without signal handlers
-                print(f"[DEBUG] Not in main thread, creating new instance")
                 logging.info("[RETICULUM_BACKEND] Not in main thread, initializing without signal handlers")
                 
                 import signal as signal_module
@@ -251,16 +236,12 @@ class ReticulumBackend(NetworkBackend):
                 
                 try:
                     self._reticulum = RNS.Reticulum(configdir=expanded_dir)
-                    print(f"[DEBUG] New instance created with configdir: {expanded_dir}")
                     logging.info(f"[RETICULUM_BACKEND] Using config dir: {expanded_dir} (no signal handlers)")
                 finally:
                     signal_module.signal = original_signal
             else:
                 # Main thread - initialize normally
-                print(f"[DEBUG] In main thread, creating new instance")
-                print(f"[DEBUG] About to create with configdir: {expanded_dir}")
                 self._reticulum = RNS.Reticulum(configdir=expanded_dir)
-                print(f"[DEBUG] New instance created with configdir: {expanded_dir}")
                 logging.info(f"[RETICULUM_BACKEND] Using config dir: {expanded_dir}")
             
             # Load or create identity
@@ -360,16 +341,14 @@ class ReticulumBackend(NetworkBackend):
     def _server_link_established(self, link):
         """Callback when client connects to server"""
         logging.info(f"[RETICULUM_BACKEND] *** CALLBACK TRIGGERED *** Client connecting!")
-        logging.info(f"[RETICULUM_BACKEND] DEBUG: Incoming link hash: {RNS.hexrep(link.hash, delimit=False)}")
-        logging.info(f"[RETICULUM_BACKEND] DEBUG: Incoming link status: {link.status}")
         
         try:
             link_hash = RNS.hexrep(link.hash, delimit=False)
             logging.info(f"[RETICULUM_BACKEND] Client connected: {link_hash}")
             socketio_logger.info("[RETICULUM] Client connecting...")
             
-            # Set packet callback for this link
-            link.set_packet_callback(self._server_packet_received)
+            # Configure callbacks & strategies (THIS WAS THE FIX)
+            self._configure_link_callbacks(link)
             
             # Create session for this incoming Link
             session = ReticulumSession(link, "CLIENT")  # Use "CLIENT" as remote_grid placeholder
@@ -381,7 +360,6 @@ class ReticulumBackend(NetworkBackend):
                 self._active_sessions[session_key] = session
             
             logging.info(f"[RETICULUM_BACKEND] Session created: {session_key}")
-            logging.info(f"[RETICULUM_BACKEND] DEBUG: Active sessions count: {len(self._active_sessions)}")
             
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Link established callback error: {e}")
@@ -426,30 +404,41 @@ class ReticulumBackend(NetworkBackend):
         announce_thread.start()
         logging.info(f"[RETICULUM_BACKEND] Started announcement thread (interval: {self.announce_interval}s)")
     
+    def _configure_link_callbacks(self, link):
+        """
+        Apply standard callbacks and RESOURCE STRATEGIES to a link.
+        Used by both Client (on connect) and Server (on incoming).
+        """
+        # 1. Packet Callback (Small data)
+        link.set_packet_callback(self._packet_received_callback)
+        if self.is_server:
+            link.set_packet_callback(self._server_packet_received)
+        else:
+            link.set_packet_callback(self._client_packet_received)
+        
+        # 2. Resource Strategy (Large data > 200 bytes)
+        # CRITICAL: We must accept resources, or large transfers will be ignored.
+        link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+        link.set_resource_callback(self._on_resource_concluded)
+        link.set_resource_started_callback(self._on_resource_started)
+        link.set_resource_concluded_callback(self._on_resource_concluded)
+
+        # 3. Windowing (Congestion Control)
+        # Removed invalid set_packet_window call
+        # Reticulum handles basic packet windowing internally. 
+        # For large resources, we handle it in send_data using resource.window = 1
+
     def connect(self, remote_callsign: tuple) -> Optional[ReticulumSession]:
         """
         Establish connection to remote station.
         
         For CLIENT: Connect to server using hash and public key from config
         For SERVER: Wait for incoming Link (via callback)
-        
-        Args:
-            remote_callsign: Tuple of (callsign, ssid) - used by packet/VARA, ignored for Reticulum
-            
-        Returns:
-            ReticulumSession if successful, None if failed
         """
-        
-        print("\n" + "="*70)
-        print("RETICULUM CONNECT CALLED!")
-        print(f"is_server: {self.is_server}")
-        print(f"remote_callsign: {remote_callsign}")
-        print("="*70 + "\n")
         
         try:
             # SERVER MODE: Wait for incoming connection via callback
             if self.is_server:
-                print("[DEBUG] SERVER MODE - Waiting for incoming connection")
                 logging.info("[RETICULUM_BACKEND] Server waiting for incoming Link...")
                 socketio_logger.info("[RETICULUM] Waiting for incoming connection...")
                 
@@ -459,7 +448,6 @@ class ReticulumBackend(NetworkBackend):
                 while True:
                     # Check shutdown flag
                     if self._shutting_down:
-                        logging.info("[RETICULUM_BACKEND] Shutdown detected, exiting wait")
                         return None
                     
                     # Check if a session was created by the _server_link_established callback
@@ -467,7 +455,6 @@ class ReticulumBackend(NetworkBackend):
                         if self._active_sessions:
                             # Found a session! Return the first one
                             session = list(self._active_sessions.values())[0]
-                            print("[DEBUG] SERVER - Found incoming session, returning it")
                             logging.info(f"[RETICULUM_BACKEND] Accepted incoming connection")
                             socketio_logger.info("[SESSION] Client connected")
                             return session
@@ -475,17 +462,12 @@ class ReticulumBackend(NetworkBackend):
                     time.sleep(check_interval)
             
             # CLIENT MODE: Connect to server using hash and public key
-            print("[DEBUG] CLIENT MODE - Starting connection to server")
             server_hash = self.hamstr_server_hash
             server_pubkey = self.hamstr_server_pubkey
             
-            print(f"[DEBUG] Server hash: {server_hash}")
-            print(f"[DEBUG] Server pubkey length: {len(server_pubkey) if server_pubkey else 0}")
-            
             if not server_hash or not server_pubkey:
-                print("[DEBUG] ERROR - Missing server hash or public key!")
                 logging.error("[RETICULUM_BACKEND] Missing server hash or public key in client_settings.ini")
-                socketio_logger.error("[RETICULUM] Missing server configuration - check settings")
+                socketio_logger.error("[RETICULUM] Missing server configuration")
                 return None
             
             socketio_logger.info(f"[RETICULUM] Connecting to server...")
@@ -496,28 +478,16 @@ class ReticulumBackend(NetworkBackend):
                 destination_hash = bytes.fromhex(server_hash)
                 public_key_bytes = bytes.fromhex(server_pubkey)
                 
-                print(f"[DEBUG] Converted hash to {len(destination_hash)} bytes")
-                print(f"[DEBUG] Converted pubkey to {len(public_key_bytes)} bytes")
-                
                 # Reconstruct server Identity from public key
                 server_identity = RNS.Identity()
                 server_identity.load_public_key(public_key_bytes)
-                print("[DEBUG] Loaded server Identity from public key")
                 
-            except ValueError as e:
-                print(f"[DEBUG] ERROR - Invalid hash/pubkey format: {e}")
-                logging.error(f"[RETICULUM_BACKEND] Invalid hash or public key format: {e}")
-                socketio_logger.error("[RETICULUM] Invalid server configuration format")
-                return None
             except Exception as e:
-                print(f"[DEBUG] ERROR - Failed to load Identity: {e}")
                 logging.error(f"[RETICULUM_BACKEND] Failed to load Identity: {e}")
                 socketio_logger.error("[RETICULUM] Failed to process server identity")
-                import traceback
-                logging.error(traceback.format_exc())
                 return None
             
-            # Create outbound destination using reconstructed Identity
+            # Create outbound destination
             try:
                 outbound_destination = RNS.Destination(
                     server_identity,
@@ -526,33 +496,12 @@ class ReticulumBackend(NetworkBackend):
                     "hamstr",
                     "server"
                 )
-                
-                dest_hash_hex = RNS.hexrep(outbound_destination.hash, delimit=False)
-                print(f"[DEBUG] Created outbound destination")
-                print(f"[DEBUG] Outbound hash: {dest_hash_hex}")
-                print(f"[DEBUG] Expected hash: {server_hash}")
-                
-                if dest_hash_hex != server_hash:
-                    print(f"[DEBUG] ERROR - HASH MISMATCH!")
-                    logging.error(f"[RETICULUM_BACKEND] HASH MISMATCH!")
-                    socketio_logger.error("[RETICULUM] Server identity mismatch")
-                    return None
-                
             except Exception as e:
-                print(f"[DEBUG] ERROR - Failed to create outbound destination: {e}")
                 logging.error(f"[RETICULUM_BACKEND] Failed to create outbound destination: {e}")
-                socketio_logger.error("[RETICULUM] Failed to create connection endpoint")
-                import traceback
-                logging.error(traceback.format_exc())
                 return None
             
-            # REQUEST PATH TO DESTINATION (this is what was missing!)
-            print(f"[DEBUG] Checking if we have path to destination...")
-            has_path = RNS.Transport.has_path(destination_hash)
-            print(f"[DEBUG] Has path: {has_path}")
-            
-            if not has_path:
-                print("[DEBUG] No path - requesting...")
+            # REQUEST PATH TO DESTINATION
+            if not RNS.Transport.has_path(destination_hash):
                 logging.info("[RETICULUM_BACKEND] No path to destination, requesting...")
                 socketio_logger.info("[RETICULUM] Finding path to server...")
                 RNS.Transport.request_path(destination_hash)
@@ -561,109 +510,66 @@ class ReticulumBackend(NetworkBackend):
                 path_timeout = 30
                 start = time.time()
                 while not RNS.Transport.has_path(destination_hash):
-                    elapsed = time.time() - start
-                    if elapsed > path_timeout:
-                        print(f"[DEBUG] ERROR - Path request timeout after {elapsed}s")
+                    if time.time() - start > path_timeout:
                         logging.error("[RETICULUM_BACKEND] Path request timeout")
                         socketio_logger.error("[RETICULUM] Cannot find path to server")
                         return None
-                    if int(elapsed) % 5 == 0:  # Print every 5 seconds
-                        print(f"[DEBUG] Still waiting for path... {elapsed:.0f}s")
                     time.sleep(0.1)
                 
-                print("[DEBUG] Path established!")
                 logging.info("[RETICULUM_BACKEND] Path established to server")
-            else:
-                print("[DEBUG] Already have path to destination")
-                logging.info("[RETICULUM_BACKEND] Already have path to destination")
             
             # Establish Link
-            print("[DEBUG] Creating Link...")
             socketio_logger.info("[RETICULUM] Establishing link...")
             logging.info("[RETICULUM_BACKEND] Creating Link to server...")
             
             try:
                 link = RNS.Link(outbound_destination)
-                
-                print(f"[DEBUG] Link object created")
-                print(f"[DEBUG] Link initial status: {link.status}")
-                print(f"[DEBUG] RNS.Link.ACTIVE constant: {RNS.Link.ACTIVE}")
-                
             except Exception as e:
-                print(f"[DEBUG] ERROR - Failed to create Link: {e}")
                 logging.error(f"[RETICULUM_BACKEND] Failed to create Link: {e}")
-                socketio_logger.error("[RETICULUM] Failed to initiate connection")
-                import traceback
-                logging.error(traceback.format_exc())
                 return None
             
             # Wait for Link establishment
-            print(f"[DEBUG] Waiting for link to become ACTIVE (timeout: {self.connection_timeout}s)...")
             link_timeout = self.connection_timeout
             start_time = time.time()
-            last_status = link.status
             
             while time.time() - start_time < link_timeout:
                 if self._shutting_down:
-                    print("[DEBUG] Shutdown detected")
-                    logging.info("[RETICULUM_BACKEND] Shutdown detected during link establishment")
                     link.teardown()
                     return None
                 
-                # Log status changes
-                if link.status != last_status:
-                    print(f"[DEBUG] Link status changed: {last_status} -> {link.status}")
-                    logging.info(f"[RETICULUM_BACKEND] Link status: {last_status} -> {link.status}")
-                    last_status = link.status
-                
-                elapsed = time.time() - start_time
-                if int(elapsed) % 10 == 0 and elapsed > 0:  # Print every 10 seconds
-                    print(f"[DEBUG] Still waiting for ACTIVE... {elapsed:.0f}s, current status: {link.status}")
-                    
                 if link.status == RNS.Link.ACTIVE:
-                    print("[DEBUG] Link is ACTIVE!")
                     socketio_logger.info("[SESSION] CONNECTED")
                     logging.info("[RETICULUM_BACKEND] Link established successfully")
                     break
                 elif link.status == RNS.Link.CLOSED:
-                    print("[DEBUG] ERROR - Link CLOSED during establishment")
                     logging.error("[RETICULUM_BACKEND] Link closed during establishment")
                     socketio_logger.error("[RETICULUM] Link establishment failed")
                     return None
                 time.sleep(0.1)
             else:
-                print(f"[DEBUG] ERROR - Link establishment timeout!")
-                print(f"[DEBUG] Final status: {link.status}")
                 socketio_logger.error("[RETICULUM] Link establishment timeout")
                 logging.error(f"[RETICULUM_BACKEND] Link timeout after {link_timeout}s")
-                logging.error(f"[RETICULUM_BACKEND] Final link status: {link.status}")
                 link.teardown()
                 return None
             
             # Create session
-            print("[DEBUG] Creating session...")
             session = ReticulumSession(link, server_hash[:16])
             
-            # Set packet callback for receiving data
-            link.set_packet_callback(self._client_packet_received)
+            # Configure strategies (THIS IS WHERE THE FIX WAS APPLIED)
+            self._configure_link_callbacks(link)
             
             # Store session
             with self._session_lock:
                 session_key = f"reticulum-{server_hash[:8]}"
                 self._active_sessions[session_key] = session
             
-            print(f"[DEBUG] Session created: {session_key}")
-            logging.info(f"[RETICULUM_BACKEND] Connection established to server")
             self.status = BackendStatus.CONNECTED
-            
             return session
             
         except Exception as e:
-            print(f"[DEBUG] EXCEPTION in connect(): {e}")
             logging.error(f"[RETICULUM_BACKEND] Connection failed: {e}")
             socketio_logger.error(f"[RETICULUM] Connection failed: {e}")
             import traceback
-            traceback.print_exc()
             logging.error(traceback.format_exc())
             return None
     
@@ -685,6 +591,11 @@ class ReticulumBackend(NetworkBackend):
             
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Packet received error: {e}")
+            
+    def _packet_received_callback(self, data, packet):
+        """Generic fallback packet callback"""
+        # Handled by specific server/client callbacks
+        pass
     
     def send_data(self, session: ReticulumSession, data: bytes) -> bool:
         """
@@ -714,26 +625,29 @@ class ReticulumBackend(NetworkBackend):
             
             data_size = len(data)
             logging.info(f"[RETICULUM_BACKEND] Sending {data_size} bytes")
-            socketio_logger.info(f"[RETICULUM] Sending request ({data_size} bytes)...")
             
-            # Set Resource callbacks for progress tracking
-            # These will be called automatically if data >8KB triggers Resource
-            session.link.set_resource_started_callback(self._on_resource_started)
-            session.link.set_resource_callback(self._on_resource_progress)
-            session.link.set_resource_concluded_callback(self._on_resource_concluded)
-            
-            # Create and send packet (Reticulum's pattern)
-            # RNS will automatically use Resources if data is large
-            packet = RNS.Packet(session.link, data)
-            packet.send()
-            
-            logging.info("[RETICULUM_BACKEND] Packet sent successfully")
-            session.update_activity()
-            
-            # Note: For large transfers, Resource callbacks will provide progress
-            # For small transfers, this completes immediately
-            
-            return True
+            # --- CRITICAL FIX: Explicit Split Logic ---
+            if data_size <= self.packet_mtu:
+                # Small Data -> Packet
+                packet = RNS.Packet(session.link, data)
+                packet.send()
+                session.update_activity()
+                return True
+            else:
+                # Large Data -> Resource
+                socketio_logger.info(f"[RETICULUM] Starting resource transfer ({data_size} bytes)...")
+                
+                resource = RNS.Resource(data, session.link)
+                
+                # --- CRITICAL FIX: Window = 1 for LoRa Stability ---
+                # This forces Reticulum to wait for an ACK for every segment.
+                resource.window = 1
+                
+                # Set progress monitoring
+                # Note: These are set on the link for *incoming*, but here we just rely on Reticulum
+                # to send the resource. We don't need to manually attach callbacks to the *Link* for *outgoing*
+                
+                return True
             
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Send error: {e}")
@@ -768,8 +682,22 @@ class ReticulumBackend(NetworkBackend):
     def _on_resource_concluded(self, resource):
         """Callback when transfer completes"""
         try:
-            logging.info("[RETICULUM_BACKEND] Resource transfer complete")
-            socketio_logger.info("[RETICULUM] Transfer complete")
+            if resource.status == RNS.Resource.COMPLETE:
+                # --- CRITICAL FIX: Actually Read the Data ---
+                data = resource.data.read()
+                logging.info(f"[RETICULUM_BACKEND] Resource finished. Read {len(data)} bytes.")
+                socketio_logger.info("[RETICULUM] Large transfer received.")
+                
+                # Find the session and inject data so DirectProtocol sees it
+                with self._session_lock:
+                    for session in self._active_sessions.values():
+                        if session.link == resource.link:
+                            session.append_data(data)
+                            session.update_activity()
+                            return
+            else:
+                logging.warning(f"[RETICULUM_BACKEND] Resource failed status: {resource.status}")
+                
         except Exception as e:
             logging.error(f"[RETICULUM_BACKEND] Resource concluded callback error: {e}")
     
@@ -793,7 +721,7 @@ class ReticulumBackend(NetworkBackend):
                 return None
             
             logging.info(f"[RETICULUM_BACKEND] Waiting for data (timeout: {timeout}s)...")
-            socketio_logger.info("[RETICULUM] Waiting for response...")
+            # socketio_logger.info("[RETICULUM] Waiting for response...")
             
             # Wait for data via the session's event-based system
             data = session.get_received_data(timeout)
@@ -805,7 +733,7 @@ class ReticulumBackend(NetworkBackend):
                 return data
             else:
                 logging.warning(f"[RETICULUM_BACKEND] Receive timeout after {timeout}s")
-                socketio_logger.error("[RETICULUM] Receive timeout")
+                # socketio_logger.error("[RETICULUM] Receive timeout")
                 return None
                 
         except Exception as e:

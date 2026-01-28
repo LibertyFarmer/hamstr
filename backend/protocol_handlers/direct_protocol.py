@@ -85,7 +85,7 @@ class DirectProtocol(ProtocolHandler):
             socketio_logger.error(f"[CONTROL] Error: {e}")
             return False
         
-    def wait_for_transmission_complete(self, session, timeout: int = 30) -> bool:
+    def wait_for_transmission_complete(self, session, timeout: int = 120) -> bool:
         """Wait for backend to finish transmitting data (for reliable transports)."""
         try:
             # Let the backend handle transmission completion
@@ -102,7 +102,7 @@ class DirectProtocol(ProtocolHandler):
             logging.error(f"[DIRECT] Error waiting for transmission: {e}")
             return False
         
-    def receive_nostr_response(self, session, timeout: int = 30) -> Optional[dict]:
+    def receive_nostr_response(self, session, timeout: int = 120) -> Optional[dict]:
         """Receive NOSTR response directly as JSON."""
         try:
             logging.debug(f"[DIRECT] Waiting for response (timeout: {timeout}s)")
