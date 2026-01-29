@@ -12,12 +12,13 @@ import sys
 from typing import Optional, Dict, Any
 from .base_protocol import ProtocolHandler
 from socketio_logger import get_socketio_logger
+import config
 
 socketio_logger = get_socketio_logger()
 
 
 class DirectProtocol(ProtocolHandler):
-    """Direct protocol for reliable transports like VARA."""
+    """Direct protocol for reliable transports like VARA and Reticulum."""
     
     def send_control_message(self, session, msg_type: str) -> bool:
         """Send control message (DONE, DONE_ACK, DISCONNECT, DISCONNECT_ACK)."""
@@ -26,7 +27,8 @@ class DirectProtocol(ProtocolHandler):
             success = self.backend_manager.send_data(session, control_data)
             if success:
                 # Wait for backend to finish transmitting
-                self.wait_for_transmission_complete(session, timeout=30)
+                # Increased timeout to prevent disconnects during slow fades
+                self.wait_for_transmission_complete(session, timeout=60)
                 logging.info(f"[DIRECT] Sent {msg_type}")
                 sys.stdout.flush()
                 socketio_logger.info(f"[CONTROL] Sent {msg_type}")
@@ -36,9 +38,10 @@ class DirectProtocol(ProtocolHandler):
             sys.stdout.flush()
             return False
     
-    def wait_for_control_message(self, session, expected_type: str, timeout: int = 30) -> bool:
+    def wait_for_control_message(self, session, expected_type: str, timeout: int = 60) -> bool:
         """Wait for specific control message."""
         try:
+            # Use provided timeout (default increased to 60s)
             response = self.backend_manager.receive_data(session, timeout)
             if response:
                 msg = json.loads(response.decode('utf-8'))
@@ -53,8 +56,6 @@ class DirectProtocol(ProtocolHandler):
             sys.stdout.flush()
             return False
         
-    
-    
     def send_nostr_request(self, session, request_data: dict) -> bool:
         """Send NOSTR request directly as JSON."""
         try:
@@ -72,7 +73,8 @@ class DirectProtocol(ProtocolHandler):
             
             if success:
                 # Wait for backend to finish transmitting
-                self.wait_for_transmission_complete(session, timeout=60)
+                # CRITICAL: Increased to 120s. Large requests on slow links need time.
+                self.wait_for_transmission_complete(session, timeout=120)
                 socketio_logger.info(f"[CONTROL] Transmission complete")
             else:
                 socketio_logger.error(f"[CONTROL] Transmission failed")
@@ -91,11 +93,17 @@ class DirectProtocol(ProtocolHandler):
             # Let the backend handle transmission completion
             if hasattr(self.backend_manager, '_backend'):
                 backend = self.backend_manager._backend
+                
+                # Check for VARA-specific wait method
                 if hasattr(backend, '_wait_for_vara_tx_complete'):
                     return backend._wait_for_vara_tx_complete(timeout)
+                
+                # Future proofing: Check for generic wait method (for Reticulum later)
+                if hasattr(backend, 'wait_for_tx_complete'):
+                    return backend.wait_for_tx_complete(timeout)
             
-            # Fallback for backends without transmission complete checking
-            logging.debug("[DIRECT] Backend doesn't support transmission complete check")
+            # Fallback for backends without transmission complete checking (Reticulum currently)
+            # This is safe because Reticulum handles buffering internally
             return True
             
         except Exception as e:
@@ -107,7 +115,9 @@ class DirectProtocol(ProtocolHandler):
         try:
             logging.debug(f"[DIRECT] Waiting for response (timeout: {timeout}s)")
             sys.stdout.flush()
-            socketio_logger.info("[SYSTEM] Waiting for response via VARA...")
+            
+            # FIX: Generic log message (was "via VARA")
+            socketio_logger.info("[SYSTEM] Waiting for response from server...")
             
             response_data = self.backend_manager.receive_data(session, timeout)
             

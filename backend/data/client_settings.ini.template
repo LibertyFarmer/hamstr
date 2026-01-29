@@ -42,6 +42,7 @@ ptt_serial_baud = 38400
 ptt_method = BOTH
 pre_ptt_delay = 0.1
 post_ptt_delay = 0.1
+VARA_TEST_MODE = False
 
 # Reticulum Client Settings (when using Reticulum backend)
 [RETICULUM]
