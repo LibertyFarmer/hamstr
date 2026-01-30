@@ -12,6 +12,7 @@ import sys
 from typing import Optional, Dict, Any
 from .base_protocol import ProtocolHandler
 from socketio_logger import get_socketio_logger
+import config
 
 socketio_logger = get_socketio_logger()
 
@@ -25,7 +26,8 @@ class DirectProtocol(ProtocolHandler):
             control_data = json.dumps({'type': msg_type}).encode('utf-8')
             success = self.backend_manager.send_data(session, control_data)
             if success:
-                # Wait for backend to finish transmitting (Smart Wait)
+                # Wait for backend to finish transmitting
+                # Increased timeout to prevent disconnects during slow fades
                 self.wait_for_transmission_complete(session, timeout=60)
                 logging.info(f"[DIRECT] Sent {msg_type}")
                 sys.stdout.flush()
@@ -39,7 +41,7 @@ class DirectProtocol(ProtocolHandler):
     def wait_for_control_message(self, session, expected_type: str, timeout: int = 60) -> bool:
         """Wait for specific control message."""
         try:
-            # Note: Backend treats this timeout as 'Idle Timeout' now
+            # Use provided timeout (default increased to 60s)
             response = self.backend_manager.receive_data(session, timeout)
             if response:
                 msg = json.loads(response.decode('utf-8'))
@@ -53,41 +55,27 @@ class DirectProtocol(ProtocolHandler):
             logging.error(f"[DIRECT] Error waiting for {expected_type}: {e}")
             sys.stdout.flush()
             return False
-    
-    def send_nostr_request(self, session, request_data: dict) -> bool:
-        """
-        Send NOSTR request directly as JSON.
         
-        AUTO-DISCONNECT LOGIC:
-        If this is a RESPONSE (contains 'data'), we assume the transaction is complete
-        and automatically initiate the disconnect handshake (DONE -> ACK -> DISC).
-        """
+    def send_nostr_request(self, session, request_data: dict) -> bool:
+        """Send NOSTR request directly as JSON."""
         try:
             json_data = json.dumps(request_data).encode('utf-8')
             request_type = request_data.get('type', 'Response Packet')
-            # Determine if this is a response packet (end of flow)
-            is_response = 'data' in request_data or request_data.get('success') is not None
             
-            if is_response:
+            if 'data' in request_data:
                 socketio_logger.info(f"[CONTROL] Sending response")
             else:
                 socketio_logger.info(f"[CONTROL] Sending {request_type} request")
             
             logging.info(f"[DIRECT] Sending: {request_type} ({len(json_data)} bytes)")
             sys.stdout.flush()
-            
             success = self.backend_manager.send_data(session, json_data)
             
             if success:
-                # Smart Wait 
+                # Wait for backend to finish transmitting
+                # CRITICAL: Increased to 120s. Large requests on slow links need time.
                 self.wait_for_transmission_complete(session, timeout=120)
                 socketio_logger.info(f"[CONTROL] Transmission complete")
-                
-                # --- AUTO-INITIATE DISCONNECT FOR RESPONSES ---
-                if is_response:
-                    logging.info("[DIRECT] Response sent, initiating disconnect sequence...")
-                    self._initiate_disconnect_sequence(session)
-                # ----------------------------------------------
             else:
                 socketio_logger.error(f"[CONTROL] Transmission failed")
             
@@ -98,47 +86,26 @@ class DirectProtocol(ProtocolHandler):
             sys.stdout.flush()
             socketio_logger.error(f"[CONTROL] Error: {e}")
             return False
-
-    def _initiate_disconnect_sequence(self, session):
-        """Helper to run the full disconnect handshake (Server Side)."""
-        try:
-            # 1. Send DONE
-            logging.info("[SERVER] Sending DONE to client")
-            self.send_control_message(session, 'DONE')
-            
-            # 2. Wait for DONE_ACK
-            logging.info("[SERVER] Waiting for DONE_ACK")
-            if self.wait_for_control_message(session, 'DONE_ACK', timeout=30):
-                logging.info("[DIRECT] Received DONE_ACK")
-                
-                # 3. Send DISCONNECT
-                logging.info("[SERVER] Sending DISCONNECT to client")
-                self.send_control_message(session, 'DISCONNECT')
-                
-                # 4. Wait for DISCONNECT_ACK
-                logging.info("[SERVER] Waiting for DISCONNECT_ACK")
-                if self.wait_for_control_message(session, 'DISCONNECT_ACK', timeout=30):
-                    logging.info("[DIRECT] Received DISCONNECT_ACK")
-                    logging.info("[SERVER] Clean disconnect completed")
-            
-            # 5. Actually close the socket
-            self.backend_manager.disconnect(session)
-            
-        except Exception as e:
-            logging.error(f"[DIRECT] Disconnect sequence error: {e}")
-            # Force close if handshake fails
-            self.backend_manager.disconnect(session)
-
+        
     def wait_for_transmission_complete(self, session, timeout: int = 120) -> bool:
-        """Wait for backend to finish transmitting data."""
+        """Wait for backend to finish transmitting data (for reliable transports)."""
         try:
+            # Let the backend handle transmission completion
             if hasattr(self.backend_manager, '_backend'):
                 backend = self.backend_manager._backend
+                
+                # Check for VARA-specific wait method
                 if hasattr(backend, '_wait_for_vara_tx_complete'):
                     return backend._wait_for_vara_tx_complete(timeout)
+                
+                # Future proofing: Check for generic wait method (for Reticulum later)
                 if hasattr(backend, 'wait_for_tx_complete'):
                     return backend.wait_for_tx_complete(timeout)
+            
+            # Fallback for backends without transmission complete checking (Reticulum currently)
+            # This is safe because Reticulum handles buffering internally
             return True
+            
         except Exception as e:
             logging.error(f"[DIRECT] Error waiting for transmission: {e}")
             return False
@@ -146,9 +113,11 @@ class DirectProtocol(ProtocolHandler):
     def receive_nostr_response(self, session, timeout: int = 120) -> Optional[dict]:
         """Receive NOSTR response directly as JSON."""
         try:
-            logging.debug(f"[DIRECT] Waiting for response (Idle Timeout: {timeout}s)")
+            logging.debug(f"[DIRECT] Waiting for response (timeout: {timeout}s)")
             sys.stdout.flush()
-            socketio_logger.info("[SYSTEM] Waiting for response via VARA...")
+            
+            # FIX: Generic log message (was "via VARA")
+            socketio_logger.info("[SYSTEM] Waiting for response from server...")
             
             response_data = self.backend_manager.receive_data(session, timeout)
             
@@ -164,6 +133,8 @@ class DirectProtocol(ProtocolHandler):
                 
                 return response_dict
             else:
+                logging.debug("[DIRECT] No response received")
+                sys.stdout.flush()
                 socketio_logger.warning("[SYSTEM] No response received, timeout")
                 return None
                 
