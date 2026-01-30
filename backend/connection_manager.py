@@ -91,9 +91,10 @@ class ConnectionManager:
 
     def connect(self, remote_callsign):
         """Connect to remote station."""
+        # FIX: Handle stale sessions instead of blocking
         if self.current_session:
-            logging.warning("[CONNECTION_MGR] Already connected")
-            return None # Return None on failure to match signature
+            logging.warning(f"[CONNECTION_MGR] Session {getattr(self.current_session, 'id', 'unknown')} exists. Cleaning up stale session.")
+            self.cleanup_session(self.current_session)
 
         # --- RETICULUM SAFEGUARD ---
         # Detect if we are using Reticulum backend safely (no attribute guessing)

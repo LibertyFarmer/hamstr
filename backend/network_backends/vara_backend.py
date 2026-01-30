@@ -563,13 +563,19 @@ class VARABackend(NetworkBackend):
             self._update_status(BackendStatus.DISCONNECTED)
             
             if self.is_server:
-                # Polite Disconnect: Tell VARA to disconnect, then wait before restarting listener
+                # Polite Disconnect: Tell VARA to disconnect
                 if self._listening_command_socket:
                     try: 
                         logging.info("[VARA_BACKEND] Sending DISCONNECT to VARA modem...")
                         self._listening_command_socket.sendall(b"DISCONNECT\r")
+                    except OSError as e:
+                        # Ignore 10053/10054 (Socket already closed)
+                        if e.winerror in [10053, 10054, 10038]:
+                            logging.info(f"[VARA_BACKEND] Socket already closed ({e.winerror}), skipping polite disconnect")
+                        else:
+                            logging.warning(f"[VARA_BACKEND] Failed to send DISCONNECT: {e}")
                     except Exception as e:
-                        logging.warning(f"[VARA_BACKEND] Failed to send DISCONNECT command: {e}")
+                        logging.warning(f"[VARA_BACKEND] Failed to send DISCONNECT: {e}")
                 
                 self._restart_vara_listening()
             return True
