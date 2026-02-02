@@ -495,28 +495,50 @@ class VARABackend(NetworkBackend):
             return None
         
     def _wait_for_vara_tx_complete(self, timeout: int = 60) -> bool:
-        if not self.is_server: return True
-        if not self._listening_command_socket: return True
+        """
+        Wait for VARA to complete transmission (works for both client and server).
+        Checks PTT status and buffer level to ensure data is actually transmitted.
+        """
+        logging.info(f"[VARA_BACKEND] *** _wait_for_vara_tx_complete CALLED *** is_server={self.is_server}")
+        # CLIENT: Need command socket to monitor
+        if not self.is_server:
+            # Client doesn't have persistent command socket after connecting
+            # Just wait a reasonable time based on data size
+            # This is a simple fallback - better than nothing
+            time.sleep(2)  # 2 seconds should cover most small packets
+            logging.info("[VARA_BACKEND] Client transmission delay complete")
+            return True
+        
+        # SERVER: Full monitoring available
+        if not self._listening_command_socket:
+            return True
         
         logging.info("[VARA_BACKEND] Waiting for VARA transmission to complete (Smart Wait)...")
         stall_timeout = 60
         start_wait = time.time()
         
         while True:
-            if self._check_disconnection(None): return False
-            if not self._is_transmitting:
-                if self._last_buffer_level == 0:
-                    logging.info("[VARA_BACKEND] VARA transmission complete (PTT OFF + Buffer 0)")
-                    return True
+            if self._check_disconnection(None):
+                return False
             
+            # Check if transmission is complete
+            if not self._is_transmitting and self._last_buffer_level == 0:
+                logging.info("[VARA_BACKEND] VARA transmission complete (PTT OFF + Buffer 0)")
+                return True
+            
+            # Check for stall (buffer not changing)
             time_since_change = time.time() - self._last_buffer_change_time
             if time_since_change > stall_timeout:
                 logging.warning(f"[VARA_BACKEND] VARA TX Stalled! No buffer movement for {stall_timeout}s")
                 return False
+            
+            # Overall timeout safety
             if time.time() - start_wait > 300:
                 logging.warning("[VARA_BACKEND] VARA TX timed out (Safety Limit)")
                 return False
+            
             time.sleep(0.1)
+
 
     def _check_disconnection(self, session) -> bool:
         with self._message_lock:

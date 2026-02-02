@@ -90,24 +90,40 @@ class DirectProtocol(ProtocolHandler):
     def wait_for_transmission_complete(self, session, timeout: int = 120) -> bool:
         """Wait for backend to finish transmitting data (for reliable transports)."""
         try:
+            logging.info(f"[DIRECT] *** wait_for_transmission_complete CALLED ***")
+            sys.stdout.flush()
+            
             # Let the backend handle transmission completion
-            if hasattr(self.backend_manager, '_backend'):
-                backend = self.backend_manager._backend
+            if hasattr(self.backend_manager, 'current_backend'):
+                backend = self.backend_manager.current_backend
+                logging.info(f"[DIRECT] Found backend: {type(backend).__name__}")
+                sys.stdout.flush()
                 
                 # Check for VARA-specific wait method
                 if hasattr(backend, '_wait_for_vara_tx_complete'):
+                    logging.info(f"[DIRECT] Calling _wait_for_vara_tx_complete...")
+                    sys.stdout.flush()
                     return backend._wait_for_vara_tx_complete(timeout)
+                else:
+                    logging.info(f"[DIRECT] Backend has no _wait_for_vara_tx_complete method")
+                    sys.stdout.flush()
                 
                 # Future proofing: Check for generic wait method (for Reticulum later)
                 if hasattr(backend, 'wait_for_tx_complete'):
                     return backend.wait_for_tx_complete(timeout)
+            else:
+                logging.info(f"[DIRECT] backend_manager has no _backend attribute")
+                sys.stdout.flush()
             
             # Fallback for backends without transmission complete checking (Reticulum currently)
             # This is safe because Reticulum handles buffering internally
+            logging.info(f"[DIRECT] Using fallback (no wait method)")
+            sys.stdout.flush()
             return True
             
         except Exception as e:
             logging.error(f"[DIRECT] Error waiting for transmission: {e}")
+            sys.stdout.flush()
             return False
         
     def receive_nostr_response(self, session, timeout: int = 120) -> Optional[dict]:
@@ -116,7 +132,6 @@ class DirectProtocol(ProtocolHandler):
             logging.debug(f"[DIRECT] Waiting for response (timeout: {timeout}s)")
             sys.stdout.flush()
             
-            # FIX: Generic log message (was "via VARA")
             socketio_logger.info("[SYSTEM] Waiting for response from server...")
             
             response_data = self.backend_manager.receive_data(session, timeout)
@@ -130,6 +145,13 @@ class DirectProtocol(ProtocolHandler):
                     socketio_logger.info(f"[PROGRESS] 100.00% complete")
                 else:
                     socketio_logger.info(f"[CONTROL] Message received via Server")
+                    
+                    # AUTO-SEND ACK for simple success/fail responses (NOTE publish, etc)
+                    # Only ACK if it has 'success' field (indicates a simple response)
+                    if 'success' in response_dict:
+                        logging.info("[DIRECT] Sending ACK for received response")
+                        sys.stdout.flush()
+                        self.send_control_message(session, 'ACK')
                 
                 return response_dict
             else:
