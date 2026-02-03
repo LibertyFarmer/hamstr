@@ -10,10 +10,10 @@ from socketio_logger import get_socketio_logger
 # SocketIO logger
 socketio_logger = get_socketio_logger()
 
-def create_tnc_connection(host, port):
+def create_tnc_connection(host, port, is_server=False):  # ← ADD is_server parameter
     """Create a connection to the TNC."""
     try:
-        sock = networking_create_tnc_connection(host, port)
+        sock = networking_create_tnc_connection(host, port, is_server=is_server)  # ← PASS is_server
         if sock:
             socketio_logger.info(f"[TNC] Connected to TNC at {host}:{port}")
             logging.info(f"Connected to TNC at {host}:{port}")
@@ -61,7 +61,7 @@ class ConnectionManager:
 
     def start(self):
         logging.debug("ConnectionManager start method called [CM]")
-        self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port)
+        self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port, is_server=self.is_server)  # ← PASS is_server
         if not self.tnc_connection:
             logging.error(f"Failed to connect to TNC at {self.tnc_host}:{self.tnc_port} [CM]")
             return False
