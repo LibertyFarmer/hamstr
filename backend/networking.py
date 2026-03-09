@@ -19,14 +19,25 @@ except ImportError:
 socketio_logger = get_socketio_logger()
 
 # Begin Networking Functions
-def create_tnc_connection(host, port, timeout=5):
-    """Create a connection to the TNC."""
+def create_tnc_connection(host, port, timeout=5, is_server=False):
+    """
+    Create a connection to the TNC.
     
-    # Check if we should use serial instead of TCP
-    connection_type = getattr(config, 'CONNECTION_TYPE', 'tcp').lower()
+    Args:
+        host: TCP host address
+        port: TCP port number
+        timeout: Connection timeout in seconds
+        is_server: True if called by server, False if called by client
+    """
+    
+    # Pick the right config variables based on is_server flag
+    if is_server:
+        connection_type = getattr(config, 'SERVER_CONNECTION_TYPE', 'tcp').lower()
+    else:
+        connection_type = getattr(config, 'CONNECTION_TYPE', 'tcp').lower()
     
     if connection_type == 'serial' and SERIAL_AVAILABLE:
-        return _create_serial_connection(timeout)
+        return _create_serial_connection(timeout, is_server)
     else:
         return _create_tcp_connection(host, port, timeout)
 
@@ -50,16 +61,26 @@ def _create_tcp_connection(host, port, timeout=5):
         logging.error(f"Error connecting to TNC: {e} [NETWORKING]")
     return None
 
-def _create_serial_connection(timeout=5):
-    """Create a serial connection to the TNC."""
+def _create_serial_connection(timeout=5, is_server=False):
+    """
+    Create a serial connection to the TNC.
+    
+    Args:
+        timeout: Connection timeout in seconds
+        is_server: True if called by server, False if called by client
+    """
     if not SERIAL_AVAILABLE:
         socketio_logger.error("[TNC] pyserial not available - cannot create serial connection")
         logging.error("pyserial not available - cannot create serial connection")
         return None
     
-    # Get serial settings from config
-    serial_port = getattr(config, 'SERIAL_PORT', 'COM3')
-    serial_speed = getattr(config, 'SERIAL_SPEED', 57600)
+    # Get serial settings from the appropriate config based on is_server flag
+    if is_server:
+        serial_port = getattr(config, 'SERVER_SERIAL_PORT', 'COM3')
+        serial_speed = getattr(config, 'SERVER_SERIAL_SPEED', 57600)
+    else:
+        serial_port = getattr(config, 'SERIAL_PORT', 'COM3')
+        serial_speed = getattr(config, 'SERIAL_SPEED', 57600)
     
     logging.debug(f"Attempting serial connection to TNC at {serial_port}:{serial_speed} [NETWORKING]")
     try:
@@ -179,12 +200,28 @@ def receive_packet(sock, timeout=0.1):
 
     return None, None
 
-def listen_for_packets(host, port, timeout=0.1, max_retries=3):
-    sock = create_tnc_connection(host, port)
+def listen_for_packets(host, port, timeout=0.1, max_retries=3, is_server=False):
+    """
+    Listen for incoming packets on the TNC.
+    
+    Args:
+        host: TCP host address
+        port: TCP port number
+        timeout: Receive timeout in seconds
+        max_retries: Maximum number of receive attempts
+        is_server: True if called by server, False if called by client
+    """
+    sock = create_tnc_connection(host, port, is_server=is_server)
     if not sock:
-        connection_type = getattr(config, 'CONNECTION_TYPE', 'tcp').lower()
-        if connection_type == 'serial':
+        # Pick the right config variables for error message
+        if is_server:
+            connection_type = getattr(config, 'SERVER_CONNECTION_TYPE', 'tcp').lower()
+            serial_port = getattr(config, 'SERVER_SERIAL_PORT', 'COM3')
+        else:
+            connection_type = getattr(config, 'CONNECTION_TYPE', 'tcp').lower()
             serial_port = getattr(config, 'SERIAL_PORT', 'COM3')
+            
+        if connection_type == 'serial':
             socketio_logger.error(f"[TNC] Failed to connect to serial TNC at {serial_port}")
             logging.error(f"Failed to connect to serial TNC at {serial_port}")
         else:

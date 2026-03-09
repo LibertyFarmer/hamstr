@@ -584,12 +584,20 @@ class Server:
                                     
                                     if success:
                                         logging.info(f"[SERVER] Note publish result sent: {publish_success}")
+                                        
+                                        # WAIT for client ACK before disconnecting
+                                        protocol = self.core.protocol_manager
+                                        logging.info("[SERVER] Waiting for client ACK...")
+                                        if protocol.wait_for_control_message(session, 'ACK', timeout=60):
+                                            logging.info("[SERVER] Client confirmed receipt")
+                                        else:
+                                            logging.warning("[SERVER] No ACK received (timeout)")
                                     else:
                                         logging.error("[SERVER] Failed to send note confirmation")
                                 else:
                                     logging.error("[SERVER] NOTE request missing content")
-                                
-                                continue  # Skip GET_NOTES processing
+
+                                break  # Now safe to disconnect
                             
                             # Handle ZAP_REQUEST (kind 9734 zap note)
                             if request_data.get('type') == 'ZAP_REQUEST':

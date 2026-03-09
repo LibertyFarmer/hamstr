@@ -403,20 +403,22 @@ try:
 except:
     BACKEND_TYPE = 'legacy'  # Safe default
 
-# NEW: VARA settings (with safe defaults)
+# -- VARA Backend settings --
 try:
     VARA_BANDWIDTH = config.getint('VARA', 'bandwidth', fallback=2300)
     VARA_ARQ_TIMEOUT = config.getint('VARA', 'arq_timeout', fallback=60)
     VARA_CHAT_MODE = config.get('VARA', 'chat_mode', fallback='ON')
     VARA_CONNECTION_TIMEOUT = config.getint('VARA', 'connection_timeout', fallback=30)
     VARA_HOST = config.get('VARA', 'vara_host', fallback='127.0.0.1')
+    VARA_TEST_MODE = config.getboolean('VARA', 'VARA_TEST_MODE', fallback=False)
 except:
-    # Fallback values if VARA section doesn't exist
+    # MUST use default values if VARA section doesn't exist for some reason
     VARA_BANDWIDTH = 2300
     VARA_ARQ_TIMEOUT = 60
     VARA_CHAT_MODE = 'ON'
     VARA_CONNECTION_TIMEOUT = 30
     VARA_HOST = '127.0.0.1'
+    VARA_TEST_MODE = False
 
 # VARA PTT settings - SEPARATE for client and server
 # Client PTT settings
