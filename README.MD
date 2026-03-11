@@ -32,7 +32,7 @@ HAMSTR is the world's first implementation of:
 - AX.25 Packet Radio — PacketProtocol (legacy TNC systems, 300–1200 baud)
 - VARA HF — DirectProtocol (fast, reliable, production-ready)
 - Reticulum mesh networking — DirectProtocol (LoRa, HF Radio, VHF/UHF Radio — see [RETICULUM.md](RETICULUM.md))
-- Complete Lightning zaps via ham radio and lora (NIP-57 compliant)
+- Complete Lightning zaps via ham radio and LoRa (NIP-57 compliant)
 - Full NOSTR read/write operations (posts, replies, zaps, search)
 
 **🚧 Coming Soon:**
@@ -126,51 +126,20 @@ cd hamstr
 pip install -r requirements-client.txt
 ```
 
-**3. Create your config:**
-```bash
-cd backend/data
-cp client_settings.ini.template client_settings.ini
-```
-
-**4. Edit `backend/data/client_settings.ini`:**
-```ini
-[RADIO]
-client_callsign = (YOURCALL, 7)
-hamstr_server = (SERVERCALL, 1)
-
-[NETWORK]
-backend_type = vara          # vara | packet | reticulum
-
-[VARA]
-command_port = 8300
-data_port = 8301
-use_ptt = true
-ptt_serial_port = COM11      # adjust to your PTT port
-ptt_method = BOTH
-
-[TNC]
-# for packet radio
-connection_type = tcp
-client_host = localhost
-client_port = 8001
-
-[RETICULUM]
-# see RETICULUM.md for how to get these from the server operator
-hamstr_server_hash =
-hamstr_server_pubkey =
-connection_timeout = 60
-```
-
-**5. Run the client:**
+**3. Run the client:**
 ```bash
 python web_app.py
 ```
 
-**6. Open your browser to:** `http://localhost:5000`
+`client_settings.ini` is created automatically from the template on first run.
 
+**4. Open your browser to:** `http://localhost:5000`
+
+- Go to Settings → configure your callsign, backend type, and radio settings
 - Go to Settings → NOSTR Login and enter your nsec
-- Configure your radio backend in Settings → Radio
 - Optionally add your NWC connection string for Lightning zaps
+
+All settings are documented in `backend/data/client_settings.ini.template`.
 
 ---
 
@@ -181,45 +150,16 @@ python web_app.py
 pip install -r requirements-server.txt
 ```
 
-**2. Create your config:**
-```bash
-cd backend/data
-cp server_settings.ini.template server_settings.ini
-```
-
-**3. Edit `backend/data/server_settings.ini`:**
-```ini
-[RADIO]
-server_callsign = (YOURCALL, 1)
-
-[NETWORK]
-backend_type = vara          # must match connecting clients
-
-[VARA]
-command_port = 8300
-data_port = 8301
-use_ptt = true
-ptt_serial_port = COM11      # COM X for Windows, /dev/XYZ for linux
-ptt_method = BOTH
-
-[TNC]
-connection_type = tcp
-server_host = localhost
-server_port = 8002
-
-[RETICULUM]
-# see RETICULUM.md — server publishes its destination hash for clients to connect
-
-[NOSTR]
-relays = wss://relay.damus.io,wss://nos.lol,wss://relay.nostr.band
-```
-
-**4. Launch the server UI:**
+**2. Launch the server UI:**
 ```bash
 python server_ui.py
 ```
 
-Click **Start Server** — the server runs unattended from that point, handling all client connections automatically.
+`server_settings.ini` is created automatically from the template on first run.
+
+**3.** Configure your callsign, backend type, and radio settings in the Settings dialog, then click **Start Server**.
+
+All settings are documented in `backend/data/server_settings.ini.template`.
 
 ---
 
@@ -240,12 +180,12 @@ Click **Start Server** — the server runs unattended from that point, handling 
 - ✅ Zap receipt published automatically by server
 
 ### Radio Protocol Support
-- ✅ VARA HF (DirectProtocol)
 - ✅ AX.25 Packet Radio via KISS TNC (PacketProtocol)
+- ✅ VARA HF (DirectProtocol)
 - ✅ Reticulum mesh networking (DirectProtocol)
-- ✅ Content compression for bandwidth efficiency
-- ✅ CRC checks and retransmission (PacketProtocol)
-- ✅ Missing packet recovery (PacketProtocol)
+- ✅ Custom Content compression for bandwidth efficiency
+- ✅ Custom CRC checks and retransmission (PacketProtocol)
+- ✅ Custom Missing packet recovery (PacketProtocol)
 
 ### Architecture
 - ✅ Zero-knowledge server — never sees private keys
