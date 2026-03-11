@@ -1,7 +1,28 @@
 # config.py - Updated to handle NETWORK section and backend settings
 import pathlib
 import configparser
+import shutil
+import logging
 from typing import List
+
+# --- Auto-provisioning: copy templates if settings files don't exist ---
+_data_dir = pathlib.Path(__file__).parent.absolute() / "data"
+
+_client_ini = _data_dir / "client_settings.ini"
+_client_template = _data_dir / "client_settings.ini.template"
+
+_server_ini = _data_dir / "server_settings.ini"
+_server_template = _data_dir / "server_settings.ini.template"
+
+for _ini, _template in [(_client_ini, _client_template), (_server_ini, _server_template)]:
+    if not _ini.exists():
+        if _template.exists():
+            shutil.copy(_template, _ini)
+            logging.info(f"[CONFIG] Created {_ini.name} from template")
+        else:
+            _ini.touch()
+            logging.warning(f"[CONFIG] Template missing, created empty {_ini.name}")
+# --- End auto-provisioning ---
 
 config_path = pathlib.Path(__file__).parent.absolute() / "settings.ini"
 client_callsign_path = pathlib.Path(__file__).parent.absolute() / "data/client_settings.ini"
@@ -483,8 +504,6 @@ try:
 except:
     SERVER_VARA_POST_PTT_DELAY = 0.1
 
-# Reticulum Backend Configuration Settings
-
 # ===================================================================
 # RETICULUM SETTINGS
 # ===================================================================
@@ -538,6 +557,6 @@ try:
 except:
     RETICULUM_ANNOUNCE_INTERVAL = 21600
 
-# Note: Transport configuration (TCP, LoRa, KISS TNC, etc.) is handled 
+# Note: Transport configuration (TCP, LoRa, KISS TNC, etc.) is handled
 # by Reticulum's own config files in ~/.reticulum/ or custom reticulum_config_dir
 # HAMSTR does not need to configure transport details
