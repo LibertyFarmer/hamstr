@@ -1,6 +1,14 @@
 const logTranslations = {
-  // --- NEW: Reticulum & Specific Overrides (Must come first!) ---
-  '\\[CLIENT\\] Connecting to Reticulum Server\\.\\.\\.': 'Connecting to Hamstr over Reticulum...',
+  // --- Reticulum & Specific Overrides (Must come first!) ---
+  '\\[RETICULUM\\] Connecting to server\\.\\.\\.': 'Connecting to HAMSTR over Reticulum...',
+  '\\[RETICULUM\\] Finding path to server\\.\\.\\.': 'Finding path to server...',
+  '\\[RETICULUM\\] Establishing link\\.\\.\\.': 'Establishing link...',
+  '\\[RETICULUM\\] Starting resource transfer \\((\\d+) bytes\\)\\.\\.\\.': (match) => `Transferring ${match[1]} bytes via Reticulum...`,
+  '\\[PROGRESS\\] Transfer: (\\d+)%': (match) => `Transfer: ${match[1]}% complete`,
+  '\\[RETICULUM\\] Response received \\((\\d+) bytes\\)': (match) => `Response received (${match[1]} bytes)`,
+  '\\[RETICULUM\\] Large transfer received\\.': 'Transfer complete',
+  '\\[RETICULUM\\] Disconnecting\\.\\.\\.': 'Disconnecting...',
+  '\\[SESSION\\] DISCONNECTED': 'Disconnected from server',
   '\\[SESSION\\] CONNECTED$': 'Connected to HAMSTR Server',
   '\\[CLIENT\\] Waiting for publish confirmation\\.\\.\\.': 'Waiting for relay publishing...',
 
@@ -116,7 +124,6 @@ const logTranslations = {
   '\\[CLIENT\\] Creating signed note...': 'Signing Note',
   '\\[CLIENT\\] Note Published!': 'Note live on NOSTR!',
   '\\[CLIENT\\] Note compressed, preparing to send': 'Note signed, ready to send',
-  // REMOVED DUPLICATE: '\\[CLIENT\\] Waiting for publish confirmation from server': 'Waiting for server confirmation...',
   '\\[PACKET\\] Sending message: MessageType\\.NOTE to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
     return `Starting transmission.`;
   },
@@ -134,52 +141,33 @@ const logTranslations = {
   '\\[PACKET\\] Sending message: MessageType\\.ZAP_KIND9734_REQUEST to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
     return `Starting zap transmission...`;
   },
-  '\\[CONTROL\\] Sending packet: Type=ZAP_KIND9734_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
-    return `Sending Zap Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
-  },
- 
 
-  // Zap Flow - Invoice Generation
-  '\\[CLIENT\\] Server not ready to send invoice': "Server can't send invoice",
-  '\\[CLIENT\\] READY sent, waiting for invoice response': 'Generating Lightning invoice...',
-  '\\[CLIENT\\] Invoice received, creating payment': 'Invoice received, preparing payment...',
+  // Zap Flow - Phase 2: Invoice
+  '\\[CLIENT\\] Received invoice from server': 'Invoice received from server',
+  '\\[CLIENT\\] Received zap invoice: lnbc[a-zA-Z0-9]+': 'Lightning invoice received',
+  '\\[CLIENT\\] Paying invoice via NWC...': 'Sending payment via NWC...',
+  '\\[CLIENT\\] NWC payment initiated': 'Payment initiated...',
 
-  // Zap Flow - Phase 2: NWC Payment
-  '\\[CLIENT\\] Creating encrypted NWC payment command': 'Creating payment command...',
-  '\\[CLIENT\\] Sending NWC payment command via radio': 'Sending payment to wallet...',
-  '\\[PACKET\\] Sending message: MessageType\\.NWC_PAYMENT_REQUEST to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
+  // Zap Flow - Phase 3: NWC Payment
+  '\\[CLIENT\\] Sending NWC payment command via ZAP_NWC_PAYMENT_REQUEST': 'Sending payment command...',
+  '\\[CLIENT\\] NWC payment command packets and DONE sent': 'Payment command sent. Waiting on ACK',
+  '\\[PACKET\\] Sending message: MessageType\\.ZAP_NWC_PAYMENT_REQUEST to \\(\'([A-Z0-9]+)\',\\s*(\\d+)\\)': (match) => {
     return `Sending payment command...`;
   },
-  '\\[CONTROL\\] Sending packet: Type=NWC_PAYMENT_REQUEST, Seq=(\\d+)/(\\d+), Estimated transmission time: [\\d.]+ seconds': (match) => {
-    return `Payment Command Packet ${match[1].padStart(2, '0')} of ${match[2].padStart(2, '0')}`;
+
+  // Zap Flow - Phase 4: Confirmation  
+  '\\[CLIENT\\] Received payment confirmation from server': '⚡ Payment confirmed!',
+  '\\[CLIENT\\] Zap complete!': '⚡ Zap sent successfully!',
+  '\\[PACKET\\] Received Message: Type=ZAP_CONFIRMATION': '⚡ Zap confirmed by server!',
+
+  // Zap ACK tracking
+  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+) \\[ZAP\\]': (match) => {
+    return `Zap Packet ${match[1]} confirmed`;
+  },
+  '\\[CONTROL\\] Received control: Type=ACK, Content=ACK\\|(\\d+) \\[NWC\\]': (match) => {
+    return `Payment Command Packet ${match[1]} confirmed`;
   },
 
-  // Zap Flow - Invoice Response
-  '\\[CLIENT\\] Received invoice response: .*': 'Lightning invoice received',
-  '\\[CLIENT\\] Lightning Invoice: .*': 'Processing Lightning invoice...',
-  
-  // Zap Flow - NWC Command Flow
-  '\\[CLIENT\\] Sent READY for NWC command transmission': 'Ready to send payment command',
-  '\\[CLIENT\\] Server READY received, sending NWC command': 'Sending payment command to wallet...',
-  '\\[CLIENT\\] NWC command sent, waiting for payment response': 'Waiting for wallet response...',
-  '\\[CLIENT\\] Sent READY for payment response': 'Ready for payment confirmation',
-
-  // Zap Flow - Payment Response
-  '\\[CLIENT\\] Server READY received for payment response': 'Wallet processing payment...',
-  '\\[CLIENT\\] Payment successful! Zap completed': '⚡ Zap sent successfully!',
-  '\\[CLIENT\\] Payment failed': '❌ Payment failed',
-  '\\[CLIENT\\] ⚡ Zap payment successful! Sending success confirmation to server': '⚡ Payment confirmed! Publishing zap...',
-
-  // Zap Flow - Final Confirmation
-  '\\[CLIENT\\] Confirming zap success to server': 'Confirming zap completion...',
-  '\\[CLIENT\\] Server final message received': 'Zap published to NOSTR!',
-  '\\[CLIENT\\] Waiting for server disconnect...': 'Finalizing zap...',
-  '\\[CLIENT\\] Zap session completed successfully': '⚡ Zap completed successfully!',
-  '\\[CONTROL\\] Sending packet: Type=ZAP_SUCCESS_CONFIRM, Seq=\\d+/\\d+, Estimated transmission time: [\\d.]+ seconds': 'Confirming zap success...',
-
-  // Zap Flow - Ready states
-  '\\[CONTROL\\] Received control: Type=READY, Content=ZAP_PUBLISHED': '⚡ Zap live on NOSTR!',
-  
   // Zap Flow - Disconnect handling
   '\\[CONTROL\\] Received control: Type=DISCONNECT, Content=Disconnect': 'Server requesting disconnect',
   '\\[CLIENT\\] Received disconnect from server, sending ACK': 'Confirming disconnect...',
