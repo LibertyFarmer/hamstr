@@ -16,6 +16,7 @@ const logTranslations = {
   '\\[PACKET\\] CONNECTING to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
     return `Attempting to connect to ${match[1]}...`;
   },
+  '\\[CLIENT\\] Connecting to Reticulum.*': 'Connecting to HAMSTR over Reticulum...',
   '\\[CLIENT\\] Connecting to ([A-Z0-9]+(?:-\\d+)?)...': (match) => {
   return `Connecting to ${match[1]}...`;
   },

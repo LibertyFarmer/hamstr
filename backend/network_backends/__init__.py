@@ -18,7 +18,7 @@ Usage:
     manager = NetworkBackendManager(config, is_server=False)
     
     # Connect and communicate
-    session = manager.connect(('KK7AHK', 7))
+    session = manager.connect(('callsign', 6))
     if session:
         manager.send_data(session, b"Hello World")
         response = manager.receive_data(session)

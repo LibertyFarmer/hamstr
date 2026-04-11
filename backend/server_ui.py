@@ -125,7 +125,7 @@ class SettingsDialog(QDialog):
         
         self.callsign_input = QLineEdit()
         self.callsign_input.setMaxLength(6)
-        self.callsign_input.setPlaceholderText("KK7AHK")
+        self.callsign_input.setPlaceholderText("KK1ABC")
         self.callsign_input.setFixedWidth(80)
         self.callsign_input.textChanged.connect(self.validate_callsign)
         
@@ -890,7 +890,7 @@ class HamstrServerGUI(QMainWindow):
         
         # Connection Status Parsing
         if 'received connect request from' in msg_lower:
-            # Extract callsign from message like "Received CONNECT request from KK7AHK"
+            # Extract callsign from message like "Received CONNECT request from callsign"
             match = re.search(r'from ([A-Z0-9]+)', message, re.IGNORECASE)
             if match:
                 self.connected_callsign = f"{match.group(1)}-0"
@@ -898,7 +898,7 @@ class HamstrServerGUI(QMainWindow):
                 self.current_activity = f'Connecting to {self.connected_callsign}'
         
         elif 'connected to' in msg_lower:
-            # Handle "CONNECTED to KK7AHK-0" messages
+            # Handle "CONNECTED to callsign-0" messages
             match = re.search(r'connected to ([A-Z0-9]+-\d+)', message, re.IGNORECASE)
             if match:
                 self.connected_callsign = match.group(1)

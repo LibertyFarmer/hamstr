@@ -37,13 +37,18 @@ $: logs = $currentOperationLogs || [];
 $: packetInfo = logs.reduce((latest, log) => {
     const responseMatch = log.message.match(/Type=RESPONSE, Seq=(\d+)\/(\d+)/);
     const ackMatch = log.message.match(/Type=ACK, Content=ACK\|(\d+)/);
-    const noteMatch = log.message.match(/Type=NOTE, Seq=\d+\/(\d+)/);
+    const noteMatch = log.message.match(/Type=NOTE, Seq=(\d+)\/(\d+)/);
     const zapMatch = log.message.match(/Type=ZAP_KIND9734_REQUEST, Seq=\d+\/(\d+)/);
     const nwcMatch = log.message.match(/Type=NWC_PAYMENT_REQUEST, Seq=\d+\/(\d+)/);
     const zapAckMatch = log.message.match(/Zap Packet (\d+) confirmed/);
     const nwcAckMatch = log.message.match(/Payment Command Packet (\d+) confirmed/);
 
-    if (noteMatch) return { ...latest, total: parseInt(noteMatch[1]) };
+    // Track current AND total from NOTE packets — progress updates as each packet goes out
+    if (noteMatch) {
+        const current = parseInt(noteMatch[1]);
+        const total = parseInt(noteMatch[2]);
+        return { current, total, percent: (current / total) * 100 };
+    }
     if (zapMatch) return { ...latest, total: parseInt(zapMatch[1]) };
     if (nwcMatch) return { ...latest, total: parseInt(nwcMatch[1]) };
     
@@ -106,20 +111,24 @@ $: reticulumProgress = logs.reduce((currentProgress, log) => {
   const msg = log.message;
   let newProgress = currentProgress;
 
+  // Connection phase — [RETICULUM] messages if they arrive, SESSION CONNECTED as fallback
   if (msg.includes('[RETICULUM] Connecting to server')) newProgress = Math.max(newProgress, 5);
   if (msg.includes('[RETICULUM] Finding path to server')) newProgress = Math.max(newProgress, 10);
   if (msg.includes('[RETICULUM] Establishing link')) newProgress = Math.max(newProgress, 15);
-  if (msg.includes('[SESSION] CONNECTED') && !msg.includes('via VARA') && !msg.includes(' to ')) newProgress = Math.max(newProgress, 20);
-  if (msg.includes('[CLIENT] Using protocol layer')) newProgress = Math.max(newProgress, 25);
-  if (msg.includes('[CONTROL] Data sent successfully') || msg.includes('[CONTROL] Transmission complete')) newProgress = Math.max(newProgress, 35);
+  if (/\[SESSION\] CONNECTED$/.test(msg)) newProgress = Math.max(newProgress, 20);
 
-  // Large Resource transfer — scale [PROGRESS] Transfer: X% into the 35–85 window
+  // Transfer phase — DirectProtocol control messages, always present
+  if (msg.includes('[CLIENT] Using protocol layer')) newProgress = Math.max(newProgress, 25);
+  if (msg.includes('[CONTROL] Data sent successfully') || msg.includes('[CONTROL] Transmission complete')) newProgress = Math.max(newProgress, 40);
+
+  // Large Resource transfer — scale [PROGRESS] Transfer: X% into the 40–85 window
   const transferMatch = msg.match(/\[PROGRESS\] Transfer: (\d+)%/);
   if (transferMatch) {
     const pct = parseInt(transferMatch[1]);
-    newProgress = Math.max(newProgress, 35 + Math.round(pct * 0.5));
+    newProgress = Math.max(newProgress, 40 + Math.round(pct * 0.45));
   }
 
+  // Response and completion — DirectProtocol or [RETICULUM] tagged
   if (msg.includes('[RETICULUM] Response received')) newProgress = Math.max(newProgress, 75);
   if (msg.includes('[CONTROL] Received DONE')) newProgress = Math.max(newProgress, 85);
   if (msg.includes('[CONTROL] Sent DONE_ACK')) newProgress = Math.max(newProgress, 95);
@@ -130,7 +139,8 @@ $: reticulumProgress = logs.reduce((currentProgress, log) => {
 
 // Detect active protocol
 $: isVARA = logs.some(log => log.message.includes('VARA'));
-$: isReticulum = logs.some(log => log.message.includes('[RETICULUM]'));
+// Reticulum uniquely emits plain [SESSION] CONNECTED — no callsign, no "via VARA"
+$: isReticulum = !isVARA && logs.some(log => /\[SESSION\] CONNECTED$/.test(log.message));
 
 // Use appropriate progress based on protocol
 $: progress = isVARA ? varaProgress
