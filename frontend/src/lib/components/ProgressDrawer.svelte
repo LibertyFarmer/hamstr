@@ -15,7 +15,7 @@ let logContainer;
 let translatedMessages = [];
 let progress = 0;
 let connectionStatus = 'DISCONNECTED';
-let pttStatus = 'RX';  // NEW: PTT status (RX or TX)
+let pttStatus = 'RX';
 
 $: if (hidden) {
   dispatch('drawerClosed');
@@ -37,13 +37,18 @@ $: logs = $currentOperationLogs || [];
 $: packetInfo = logs.reduce((latest, log) => {
     const responseMatch = log.message.match(/Type=RESPONSE, Seq=(\d+)\/(\d+)/);
     const ackMatch = log.message.match(/Type=ACK, Content=ACK\|(\d+)/);
-    const noteMatch = log.message.match(/Type=NOTE, Seq=\d+\/(\d+)/);
+    const noteMatch = log.message.match(/Type=NOTE, Seq=(\d+)\/(\d+)/);
     const zapMatch = log.message.match(/Type=ZAP_KIND9734_REQUEST, Seq=\d+\/(\d+)/);
     const nwcMatch = log.message.match(/Type=NWC_PAYMENT_REQUEST, Seq=\d+\/(\d+)/);
     const zapAckMatch = log.message.match(/Zap Packet (\d+) confirmed/);
     const nwcAckMatch = log.message.match(/Payment Command Packet (\d+) confirmed/);
 
-    if (noteMatch) return { ...latest, total: parseInt(noteMatch[1]) };
+    // Track current AND total from NOTE packets — progress updates as each packet goes out
+    if (noteMatch) {
+        const current = parseInt(noteMatch[1]);
+        const total = parseInt(noteMatch[2]);
+        return { current, total, percent: (current / total) * 100 };
+    }
     if (zapMatch) return { ...latest, total: parseInt(zapMatch[1]) };
     if (nwcMatch) return { ...latest, total: parseInt(nwcMatch[1]) };
     
@@ -94,21 +99,55 @@ $: varaProgress = logs.reduce((currentProgress, log) => {
   if (msg.includes('[CONTROL] Received DONE')) newProgress = Math.max(newProgress, 85);
   if (msg.includes('[CONTROL] Sent DONE_ACK')) newProgress = Math.max(newProgress, 95);
   if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
-  if (msg.includes('[CONTROL] Message received via VARA')) newProgress = Math.max(newProgress, 60);  // Server response received
-  if (msg.includes('[CLIENT] Note Published!')) newProgress = Math.max(newProgress, 75);  // Note confirmed published
+  if (msg.includes('[CONTROL] Message received via VARA')) newProgress = Math.max(newProgress, 60);
+  if (msg.includes('[CLIENT] Note Published!')) newProgress = Math.max(newProgress, 75);
   if (msg.includes('[CONTROL] Sent DONE')) newProgress = Math.max(newProgress, 95);
-  if (msg.includes('[SESSION] Client disconnect complete')) newProgress = Math.max(newProgress, 100);
   
   return newProgress;
 }, 0);
 
-// Detect if using VARA or packet protocol
+// Reticulum state-based progress
+$: reticulumProgress = logs.reduce((currentProgress, log) => {
+  const msg = log.message;
+  let newProgress = currentProgress;
+
+  // Connection phase — [RETICULUM] messages if they arrive, SESSION CONNECTED as fallback
+  if (msg.includes('[RETICULUM] Connecting to server')) newProgress = Math.max(newProgress, 5);
+  if (msg.includes('[RETICULUM] Finding path to server')) newProgress = Math.max(newProgress, 10);
+  if (msg.includes('[RETICULUM] Establishing link')) newProgress = Math.max(newProgress, 15);
+  if (/\[SESSION\] CONNECTED$/.test(msg)) newProgress = Math.max(newProgress, 20);
+
+  // Transfer phase — DirectProtocol control messages, always present
+  if (msg.includes('[CLIENT] Using protocol layer')) newProgress = Math.max(newProgress, 25);
+  if (msg.includes('[CONTROL] Data sent successfully') || msg.includes('[CONTROL] Transmission complete')) newProgress = Math.max(newProgress, 40);
+
+  // Large Resource transfer — scale [PROGRESS] Transfer: X% into the 40–85 window
+  const transferMatch = msg.match(/\[PROGRESS\] Transfer: (\d+)%/);
+  if (transferMatch) {
+    const pct = parseInt(transferMatch[1]);
+    newProgress = Math.max(newProgress, 40 + Math.round(pct * 0.45));
+  }
+
+  // Response and completion — DirectProtocol or [RETICULUM] tagged
+  if (msg.includes('[RETICULUM] Response received')) newProgress = Math.max(newProgress, 75);
+  if (msg.includes('[CONTROL] Received DONE')) newProgress = Math.max(newProgress, 85);
+  if (msg.includes('[CONTROL] Sent DONE_ACK')) newProgress = Math.max(newProgress, 95);
+  if (msg.includes('[SESSION] Client disconnect complete') || msg.includes('[SESSION] DISCONNECTED')) newProgress = Math.max(newProgress, 100);
+
+  return newProgress;
+}, 0);
+
+// Detect active protocol
 $: isVARA = logs.some(log => log.message.includes('VARA'));
+// Reticulum uniquely emits plain [SESSION] CONNECTED — no callsign, no "via VARA"
+$: isReticulum = !isVARA && logs.some(log => /\[SESSION\] CONNECTED$/.test(log.message));
 
 // Use appropriate progress based on protocol
-$: progress = isVARA ? varaProgress : (packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0);
+$: progress = isVARA ? varaProgress
+            : isReticulum ? reticulumProgress
+            : (packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0);
 
-// NEW: PTT Status detection
+// PTT Status detection
 $: pttStatus = logs.reduce((status, log) => {
   const msg = log.message;
   if (msg.includes('[CONTROL] ⚡ PTT ON')) return 'TX';
@@ -129,6 +168,11 @@ $: connectionStatus = logs.reduce((status, log) => {
   if (msg.includes('[SESSION] Client disconnect complete')) return 'DISCONNECTED';
   // VARA disconnecting
   if (msg.includes('[SESSION] Disconnecting session:')) return 'DISCONNECTING';
+  // Reticulum connections
+  if (msg.includes('[RETICULUM] Connecting to server') || msg.includes('[RETICULUM] Finding path') || msg.includes('[RETICULUM] Establishing link')) return 'CONNECTING';
+  if (msg.includes('[SESSION] CONNECTED') && !msg.includes('via VARA') && !msg.includes(' to ')) return 'CONNECTED';
+  if (msg.includes('[RETICULUM] Disconnecting')) return 'DISCONNECTING';
+  if (msg.includes('[SESSION] DISCONNECTED')) return 'DISCONNECTED';
   return status;
 }, 'DISCONNECTED');
 
@@ -162,7 +206,7 @@ onMount(() => {
     translatedMessages = [];
     progress = 0;
     connectionStatus = 'DISCONNECTED';
-    pttStatus = 'RX';  // NEW: Reset PTT status
+    pttStatus = 'RX';
   };
 
   window.addEventListener('clearLogs', handleClearLogs);
@@ -197,7 +241,7 @@ onMount(() => {
       </Button>
     </div>
 
-    <!-- Status Section - UPDATED TO 3 COLUMNS -->
+    <!-- Status Section -->
     <div class="grid grid-cols-3 gap-4">
       <!-- Progress Section -->
       <div class="col-span-1">
@@ -210,7 +254,7 @@ onMount(() => {
           color={progress === 100 ? "green" : "blue"}
         />
         <div class="text-xs text-gray-500 mt-1">
-          {#if isVARA}
+          {#if isVARA || isReticulum}
             {progress < 100 ? 'Operation in progress...' : 'Complete'}
           {:else}
             {packetInfo.current} of {packetInfo.total} packets
@@ -218,7 +262,7 @@ onMount(() => {
         </div>
       </div>
 
-      <!-- NEW: PTT Status Section -->
+      <!-- PTT Status Section -->
       <div class="col-span-1 flex flex-col items-center justify-center">
         <div class="mb-2 text-sm font-medium">PTT Status</div>
         <div class="flex items-center gap-2">

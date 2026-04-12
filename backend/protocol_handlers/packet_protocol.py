@@ -21,13 +21,26 @@ class PacketProtocol(ProtocolHandler):
     def send_nostr_request(self, session, request_data: dict) -> bool:
         """Send NOSTR request using existing packet protocol with READY/ACK."""
         try:
-            logging.info("[PACKET] Sending request via packet protocol")
+            request_type = request_data.get('type', 'GET_NOTES')
             
-            # Convert to the format your existing system expects
-            request_string = self._format_request_string(request_data)
-            
-            # Use your existing DATA_REQUEST system
-            return self.core.message_processor.send_data_request(session, request_string)
+            # Handle different request types
+            if request_type == 'NOTE':
+                # Send note using existing note system
+                logging.info("[PACKET] Sending NOTE via packet protocol")
+                note_content = request_data.get('content')
+                
+                if not note_content:
+                    logging.error("[PACKET] NOTE request missing content")
+                    return False
+                
+                # Use existing send_note method which handles READY/ACK/DONE
+                return self.core.send_note(session, note_content)
+                
+            else:
+                # DATA_REQUEST - use existing system
+                logging.info("[PACKET] Sending DATA_REQUEST via packet protocol")
+                request_string = self._format_request_string(request_data)
+                return self.core.message_processor.send_data_request(session, request_string)
             
         except Exception as e:
             logging.error(f"[PACKET] Error sending request: {e}")

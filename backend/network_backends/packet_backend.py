@@ -194,7 +194,7 @@ class PacketBackend(NetworkBackend):
         """
         try:
             # Use existing connection manager disconnect logic
-            self.connection_manager.disconnect(session)
+            self.connection_manager.handle_disconnect_request(session)
             self._update_status(BackendStatus.DISCONNECTED)
             
             logging.info("[PACKET_BACKEND] Disconnected session")

@@ -40,18 +40,29 @@ class Client:
             additional_params: Optional string of additional parameters
         """
         if not self.session or self.session.state == ModemState.DISCONNECTED:
-            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+            # --- FIX: Safe Reticulum Check ---
+            is_reticulum = False
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                # Get the actual backend instance safely
+                backend = getattr(self.core.backend_manager, 'current_backend', None)
+                # Check its type method safely
+                if backend and 'RETICULUM' in str(getattr(backend, 'get_backend_type', lambda: '')()):
+                    is_reticulum = True
+
+            if is_reticulum:
+                socketio_logger.info(f"[CLIENT] Connecting to Reticulum Server...")
+            else:
+                socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+            # ---------------------------------
             
             self.session = self.core.connect(server_callsign)
+            
             if not self.session:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False, None
             
-            # Log connection
-            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
-            
-            # Add stabilization delay only for PacketProtocol (DirectProtocol doesn't need it)
+            # Add stabilization delay only for PacketProtocol
             if not hasattr(self.core, 'protocol_manager') or \
             self.core.protocol_manager.get_protocol_type() == 'PacketProtocol':
                 time.sleep(config.CONNECTION_STABILIZATION_DELAY * 1.3)
@@ -245,23 +256,35 @@ class Client:
         return False
         
     def connect_and_send_note(self, server_callsign, note):
+        """
+        Connect to server and publish a note.
+        """
+        # 1. Connection Logic (Fixed Logging)
         if not self.session or self.session.state == ModemState.DISCONNECTED:
-            socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
+            is_reticulum = False
+            # Check safely if we are running Reticulum
+            if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+                backend = getattr(self.core.backend_manager, 'current_backend', None)
+                # Check backend type safely using string detection to avoid import errors
+                if backend and 'RETICULUM' in str(getattr(backend, 'get_backend_type', lambda: '')()):
+                    is_reticulum = True
+
+            if is_reticulum:
+                socketio_logger.info(f"[CLIENT] Connecting to Reticulum Server...")
+            else:
+                socketio_logger.info(f"[CLIENT] Connecting to {server_callsign[0]}-{server_callsign[1]}...")
             
             self.session = self.core.connect(server_callsign)
             if not self.session:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
                 return False
-            
-            # Log connection
-            socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
         
         try:
             socketio_logger.info("[CLIENT] Sending note")
             logging.info("Sending note")
             
-            # Route through protocol layer if available
+            # 2. Protocol Layer Logic
             if hasattr(self.core, 'protocol_manager') and self.core.protocol_manager:
                 socketio_logger.info("[CLIENT] Using protocol layer for note")
                 
@@ -269,60 +292,61 @@ class Client:
                 success = self.core.protocol_manager.send_nostr_request(self.session, note_data)
                 
                 if success:
-                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=60)
-                    if response and response.get('success'):
-                        socketio_logger.info("[CLIENT] Note Published!")
+                    socketio_logger.info("[CLIENT] Waiting for publish confirmation...")
+                    # 180s timeout to match Server patience
+                    response = self.core.protocol_manager.receive_nostr_response(self.session, timeout=180)
+                    
+                    if response:
+
+                        # Wrapped/Compressed Data (Standard for GET_NOTES)
+                        if isinstance(response, dict) and 'data' in response:
+                            raw_data = response['data']
+                            try:
+                                decompressed_data = decompress_nostr_data(raw_data)
+                                parsed_response = json.loads(decompressed_data)
+                            except Exception:
+                                # Fallback if wrapper existed but data wasn't compressed/valid
+                                parsed_response = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
                         
-                        protocol = self.core.protocol_manager
-                        
-                        # Send DONE
-                        socketio_logger.info("[CONTROL] Sending DONE")
-                        protocol.send_control_message(self.session, 'DONE')
-                        
-                        # Wait for DONE_ACK
-                        socketio_logger.info("[CONTROL] Waiting for DONE_ACK")
-                        done_ack = protocol.receive_nostr_response(self.session, timeout=15)
-                        if done_ack and done_ack.get('type') == 'DONE_ACK':
-                            socketio_logger.info("[CONTROL] Received DONE_ACK")
+                        # Raw Response (Standard for publishing)
                         else:
-                            socketio_logger.warning("[CONTROL] No DONE_ACK received")
-                        
-                        time.sleep(1)  # Brief pause
-                        
-                        # Send DISCONNECT (don't wait for ACK - connection will close)
-                        socketio_logger.info("[CONTROL] Sending DISCONNECT")
-                        protocol.send_control_message(self.session, 'DISCONNECT')
-                        socketio_logger.info("[CONTROL] Disconnect signal sent")
-                        
-                        time.sleep(2)  # Give it time to transmit
-                        return True
+                            parsed_response = response
+
+
+                        if isinstance(parsed_response, dict) and parsed_response.get('success'):
+                            socketio_logger.info("[CLIENT] Note Published!")
+                            logging.info("Note published successfully")
+                            
+                            # FIX: If Reticulum, we are done. Stop talking to avoid "Unable to connect" error.
+                            if hasattr(self.core, 'backend_manager'):
+                                backend = getattr(self.core.backend_manager, 'current_backend', None)
+                                if backend and 'RETICULUM' in str(getattr(backend, 'get_backend_type', lambda: '')()):
+                                     self.session.state = ModemState.DISCONNECTED
+                                     return True
+                                     
+                            return True
+                        else:
+                            error_msg = parsed_response.get('message', 'Unknown error') if isinstance(parsed_response, dict) else "Invalid response format"
+                            socketio_logger.error(f"[CLIENT] Failed to publish: {error_msg}")
+                            return False
                     else:
-                        socketio_logger.error("[CLIENT] Failed to publish note")
+                        socketio_logger.error("[CLIENT] No response from server")
                         return False
                 else:
+                    socketio_logger.error("[CLIENT] Failed to send note request")
                     return False
-            
             else:
-                # FALLBACK: Old packet system (before protocol manager was added)
-                if not self.core.send_ready(self.session) or not self.core.wait_for_ready(self.session):
-                    socketio_logger.error("Failed to establish READY state")
-                    return False
-                if not self.core.send_note(self.session, note):
-                    socketio_logger.error("[SYSTEM] Failed to send note")
-                    return False
-                response = self.core.wait_for_specific_message(self.session, MessageType.DONE_ACK, timeout=config.ACK_TIMEOUT)
-                if response:
-                    socketio_logger.info("[CONTROL] Received DONE_ACK, note transmission complete")
-                    return True
-                else:
-                    socketio_logger.error("[CLIENT] Failed to receive DONE_ACK")
-                    return False
+                # Fallback for legacy (if any)
+                socketio_logger.error("[CLIENT] Protocol manager not available")
+                return False
         
         except Exception as e:
-            socketio_logger.error(f"[SYSTEM] An error occurred during note sending: {e}")
-            logging.error(f"An error occurred during note sending: {e}")
+            socketio_logger.error(f"[SYSTEM] Error sending note: {e}")
+            logging.error(f"Error sending note: {e}")
             return False
         finally:
+            # Only run legacy disconnect if we are NOT on Reticulum/DirectProtocol (or if we failed early)
+            # This prevents the "Unable to connect" error at the end
             if self.session and self.session.state not in [ModemState.DISCONNECTING, ModemState.DISCONNECTED]:
                 self.disconnect()
 

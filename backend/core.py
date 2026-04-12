@@ -105,7 +105,15 @@ class Core:
     def start(self):
         if self.use_backend_system:
             # Backend system - no TNC startup needed
-            logging.info("[CORE] Backend system ready - VARA will connect on-demand")
+            backend_name = "Backend"
+            if hasattr(self, 'backend_manager') and self.backend_manager:
+                try:
+                    backend_type = self.backend_manager.get_backend_type()
+                    backend_name = backend_type.value.upper()
+                except:
+                    pass
+            
+            logging.info(f"[CORE] {backend_name} backend ready")
             return True
         else:
             # Legacy system - start TNC connection
@@ -200,7 +208,6 @@ class Core:
                     if header.isdigit():
                         # It's a control message
                         msg_type = MessageType(int(header))
-                        socketio_logger.info(f"[CONTROL] Received control: Type={msg_type.name}, Content={content}")
                         logging.info(f"Received control message: Type={msg_type.name}, Content={content}")
                         return source_callsign, content, msg_type
                     else:
@@ -329,16 +336,13 @@ class Core:
         logging.info("Preparing to send note")
         success = self.message_processor.send_message(session, note, MessageType.NOTE)
         if success:
-            socketio_logger.info("Note sent successfully, sending DONE")
-            logging.info("Note sent successfully, sending DONE")
-            if self.send_done(session):
-                logging.info("DONE sent")
-                socketio_logger.info("[PACKET] DONE packet sent")
-                return True
-            else:
-                socketio_logger.error("Failed to send DONE")
-                logging.error("Failed to send DONE")
-        return False
+            socketio_logger.info("Note sent successfully")
+            logging.info("Note sent successfully")
+            return True  # send_message() already handled DONE/DONE_ACK
+        else:
+            socketio_logger.error("Failed to send note")
+            logging.error("Failed to send note")
+            return False
 
     def send_response(self, session, response):
         packets = self.split_message(response.encode())
@@ -638,7 +642,6 @@ class Core:
                 missing = check_missing_packets()
                 if not missing:
                     socketio_logger.info("[CONTROL] Received DONE message & all packets are accounted for")
-                    logging.info("Received DONE message and all packets are present")
                     full_response = self.reassemble_response(response_parts, total_packets)
                     self.send_single_packet(session, 0, 0, "DONE_ACK".encode(), MessageType.DONE_ACK)
                     return full_response
@@ -781,7 +784,6 @@ class Core:
         return False
 
     def send_disconnect(self, session):
-        socketio_logger.info(f"[CONTROL] Sending DISCONNECT for session: {session.id}")
         logging.info(f"Sending DISCONNECT for session: {session.id}")
         return self.message_processor.send_control_message(session, "Disconnect", MessageType.DISCONNECT)
 

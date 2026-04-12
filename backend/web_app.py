@@ -409,7 +409,7 @@ def send_note():
             with radio_lock:
                 radio_operation_in_progress = True
                 try:
-                    success = client.connect_and_send_note(config.S_CALLSIGN, compressed_note)
+                    success = client.connect_and_send_note(config.HAMSTR_SERVER, compressed_note)
                     result_container.append(success)
                 except Exception as e:
                     # Capture exception for hardware/protocol errors
@@ -442,10 +442,10 @@ def send_note():
 
         if not result_container or not result_container[0]:
             # Connection failed - remote station not responding
-            socketio_logger.error(f"[CLIENT] Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}")
+            socketio_logger.error(f"[CLIENT] Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}")
             return jsonify({
                 "success": False,
-                "message": f"Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}"
+                "message": f"Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}"
             }), 500
 
         return jsonify({
@@ -542,7 +542,7 @@ def request_notes(count):
                 radio_operation_in_progress = True
                 try:
                     success, response = client.connect_and_send_request(
-                        config.S_CALLSIGN, 
+                        config.HAMSTR_SERVER, 
                         request_type,
                         count,
                         additional_params=additional_params
@@ -595,13 +595,13 @@ def request_notes(count):
         
         if not success:
             # Connection failed - remote station not responding (hardware worked but no response)
-            socketio_logger.error(f"[CLIENT] Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}")
+            socketio_logger.error(f"[CLIENT] Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}")
             config.CONNECTION_TIMEOUT = original_timeout
             
             # Return connection timeout error with callsign
             return jsonify({
                 "success": False,
-                "message": f"Unable to connect to {config.S_CALLSIGN[0]}-{config.S_CALLSIGN[1]}"
+                "message": f"Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}"
             }), 500
 
         if response:
@@ -1241,9 +1241,6 @@ def send_zap():
                     socketio_logger.error(f"[CLIENT] Unable to connect to {server_callsign[0]}-{server_callsign[1]}")
                     result_container[0] = {"success": False, "message": f"Unable to connect to {server_callsign[0]}-{server_callsign[1]}"}
                     return
-
-                # Log successful connection
-                socketio_logger.info(f"[SESSION] CONNECTED to {server_callsign[0]}-{server_callsign[1]}")
                 
                 # Detect protocol type
                 protocol_type = 'PacketProtocol'  # Default

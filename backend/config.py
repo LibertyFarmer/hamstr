@@ -1,7 +1,28 @@
 # config.py - Updated to handle NETWORK section and backend settings
 import pathlib
 import configparser
+import shutil
+import logging
 from typing import List
+
+# --- Auto-provisioning: copy templates if settings files don't exist ---
+_data_dir = pathlib.Path(__file__).parent.absolute() / "data"
+
+_client_ini = _data_dir / "client_settings.ini"
+_client_template = _data_dir / "client_settings.ini.template"
+
+_server_ini = _data_dir / "server_settings.ini"
+_server_template = _data_dir / "server_settings.ini.template"
+
+for _ini, _template in [(_client_ini, _client_template), (_server_ini, _server_template)]:
+    if not _ini.exists():
+        if _template.exists():
+            shutil.copy(_template, _ini)
+            logging.info(f"[CONFIG] Created {_ini.name} from template")
+        else:
+            _ini.touch()
+            logging.warning(f"[CONFIG] Template missing, created empty {_ini.name}")
+# --- End auto-provisioning ---
 
 config_path = pathlib.Path(__file__).parent.absolute() / "settings.ini"
 client_callsign_path = pathlib.Path(__file__).parent.absolute() / "data/client_settings.ini"
@@ -403,20 +424,22 @@ try:
 except:
     BACKEND_TYPE = 'legacy'  # Safe default
 
-# NEW: VARA settings (with safe defaults)
+# -- VARA Backend settings --
 try:
     VARA_BANDWIDTH = config.getint('VARA', 'bandwidth', fallback=2300)
     VARA_ARQ_TIMEOUT = config.getint('VARA', 'arq_timeout', fallback=60)
     VARA_CHAT_MODE = config.get('VARA', 'chat_mode', fallback='ON')
     VARA_CONNECTION_TIMEOUT = config.getint('VARA', 'connection_timeout', fallback=30)
     VARA_HOST = config.get('VARA', 'vara_host', fallback='127.0.0.1')
+    VARA_TEST_MODE = config.getboolean('VARA', 'VARA_TEST_MODE', fallback=False)
 except:
-    # Fallback values if VARA section doesn't exist
+    # MUST use default values if VARA section doesn't exist for some reason
     VARA_BANDWIDTH = 2300
     VARA_ARQ_TIMEOUT = 60
     VARA_CHAT_MODE = 'ON'
     VARA_CONNECTION_TIMEOUT = 30
     VARA_HOST = '127.0.0.1'
+    VARA_TEST_MODE = False
 
 # VARA PTT settings - SEPARATE for client and server
 # Client PTT settings
@@ -481,36 +504,59 @@ try:
 except:
     SERVER_VARA_POST_PTT_DELAY = 0.1
 
-# NEW: Reticulum settings (with safe defaults)
-try:
-    RETICULUM_INTERFACE_TYPE = config.get('RETICULUM', 'interface_type', fallback='kiss')
-    RETICULUM_KISS_PORT = config.getint('RETICULUM', 'kiss_port', fallback=7300)
-    RETICULUM_KISS_HOST = config.get('RETICULUM', 'kiss_host', fallback='localhost')
-    RETICULUM_CONFIG_PATH = config.get('RETICULUM', 'reticulum_config_path', fallback='~/.reticulum')
-    RETICULUM_ANNOUNCE_INTERVAL = config.getint('RETICULUM', 'announce_interval', fallback=300)
-    RETICULUM_HOP_COUNT = config.getint('RETICULUM', 'hop_count', fallback=4)
-    RETICULUM_IDENTITY_FILE = config.get('RETICULUM', 'identity_file', fallback='reticulum_identity')
-except:
-    # Fallback values if RETICULUM section doesn't exist
-    RETICULUM_INTERFACE_TYPE = 'kiss'
-    RETICULUM_KISS_PORT = 7300
-    RETICULUM_KISS_HOST = 'localhost'
-    RETICULUM_CONFIG_PATH = '~/.reticulum'
-    RETICULUM_ANNOUNCE_INTERVAL = 300
-    RETICULUM_HOP_COUNT = 4
-    RETICULUM_IDENTITY_FILE = 'reticulum_identity'
+# ===================================================================
+# RETICULUM SETTINGS
+# ===================================================================
 
-# NEW: FLDIGI settings (with safe defaults)
+# Client Reticulum config directory
 try:
-    FLDIGI_KISS_PORT = config.getint('FLDIGI', 'kiss_port', fallback=7342)
-    FLDIGI_MODE = config.get('FLDIGI', 'mode', fallback='psk31')
-    FLDIGI_ARQ_ENABLED = config.getboolean('FLDIGI', 'arq_enabled', fallback=False)
-    FLDIGI_TIMING_MULTIPLIER = config.getfloat('FLDIGI', 'timing_multiplier', fallback=2.0)
-    FLDIGI_CONNECTION_TIMEOUT = config.getint('FLDIGI', 'connection_timeout', fallback=45)
+    RETICULUM_CONFIG_DIR = client_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
 except:
-    # Fallback values if FLDIGI section doesn't exist
-    FLDIGI_KISS_PORT = 7342
-    FLDIGI_MODE = 'psk31'
-    FLDIGI_ARQ_ENABLED = False
-    FLDIGI_TIMING_MULTIPLIER = 2.0
-    FLDIGI_CONNECTION_TIMEOUT = 45
+    RETICULUM_CONFIG_DIR = None
+
+# Server Reticulum config directory
+try:
+    RETICULUM_SERVER_CONFIG_DIR = server_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
+except:
+    RETICULUM_SERVER_CONFIG_DIR = None
+
+# Client Reticulum settings
+try:
+    RETICULUM_HAMSTR_SERVER_HASH = client_config.get('RETICULUM', 'hamstr_server_hash', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_HASH = None
+
+try:
+    RETICULUM_HAMSTR_SERVER_PUBKEY = client_config.get('RETICULUM', 'hamstr_server_pubkey', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_PUBKEY = None
+
+try:
+    RETICULUM_HAMSTR_SERVER_GRID = client_config.get('RETICULUM', 'hamstr_server_grid', fallback=None)
+except:
+    RETICULUM_HAMSTR_SERVER_GRID = None
+
+try:
+    RETICULUM_CONNECTION_TIMEOUT = client_config.getint('RETICULUM', 'connection_timeout', fallback=60)
+except:
+    RETICULUM_CONNECTION_TIMEOUT = 60
+
+try:
+    RETICULUM_KEEPALIVE_INTERVAL = client_config.getint('RETICULUM', 'keepalive_interval', fallback=0)
+except:
+    RETICULUM_KEEPALIVE_INTERVAL = 0
+
+# Server Reticulum settings
+try:
+    RETICULUM_SERVER_GRID = server_config.get('RETICULUM', 'server_grid', fallback=None)
+except:
+    RETICULUM_SERVER_GRID = None
+
+try:
+    RETICULUM_ANNOUNCE_INTERVAL = server_config.getint('RETICULUM', 'announce_interval', fallback=21600)
+except:
+    RETICULUM_ANNOUNCE_INTERVAL = 21600
+
+# Note: Transport configuration (TCP, LoRa, KISS TNC, etc.) is handled
+# by Reticulum's own config files in ~/.reticulum/ or custom reticulum_config_dir
+# HAMSTR does not need to configure transport details

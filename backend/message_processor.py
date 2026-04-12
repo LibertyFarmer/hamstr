@@ -129,7 +129,6 @@ class MessageProcessor:
     
     def send_control_message(self, session, content, message_type):
         """Send a control message with retry logic"""
-        socketio_logger.info(f"[CONTROL] Sending control message: {message_type.name}")
         logging.info(f"Sending control message: {content}")
         
         # Add a small delay before sending READY messages

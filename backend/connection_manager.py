@@ -10,10 +10,10 @@ from socketio_logger import get_socketio_logger
 # SocketIO logger
 socketio_logger = get_socketio_logger()
 
-def create_tnc_connection(host, port):
+def create_tnc_connection(host, port, is_server=False):  # ← ADD is_server parameter
     """Create a connection to the TNC."""
     try:
-        sock = networking_create_tnc_connection(host, port)
+        sock = networking_create_tnc_connection(host, port, is_server=is_server)  # ← PASS is_server
         if sock:
             socketio_logger.info(f"[TNC] Connected to TNC at {host}:{port}")
             logging.info(f"Connected to TNC at {host}:{port}")
@@ -49,6 +49,8 @@ class ConnectionManager:
         self.tnc_port = config.SERVER_PORT if is_server else config.CLIENT_PORT
         self.callsign = parse_callsign(config.S_CALLSIGN if is_server else config.C_CALLSIGN)
         self.tnc_connection = None
+        self.current_session = None
+        self.status = ModemState.DISCONNECTED
         logging.debug(f"ConnectionManager initialized for {'server' if is_server else 'client'} [CM]")
 
     def _is_packet_protocol(self):
@@ -59,7 +61,7 @@ class ConnectionManager:
 
     def start(self):
         logging.debug("ConnectionManager start method called [CM]")
-        self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port)
+        self.tnc_connection = create_tnc_connection(self.tnc_host, self.tnc_port, is_server=self.is_server)  # ← PASS is_server
         if not self.tnc_connection:
             logging.error(f"Failed to connect to TNC at {self.tnc_host}:{self.tnc_port} [CM]")
             return False
@@ -88,6 +90,35 @@ class ConnectionManager:
             logging.debug("ConnectionManager stopped [CM_STOP]")
 
     def connect(self, remote_callsign):
+        """Connect to remote station."""
+        # FIX: Handle stale sessions instead of blocking
+        if self.current_session:
+            logging.warning(f"[CONNECTION_MGR] Session {getattr(self.current_session, 'id', 'unknown')} exists. Cleaning up stale session.")
+            self.cleanup_session(self.current_session)
+
+        # --- RETICULUM SAFEGUARD ---
+        # Detect if we are using Reticulum backend safely (no attribute guessing)
+        if hasattr(self.core, 'backend_manager') and self.core.backend_manager:
+            # We check the backend instance, not the manager, to avoid "No attribute" errors
+            backend = getattr(self.core.backend_manager, 'current_backend', None)
+            if backend and hasattr(backend, 'get_backend_type'):
+                # Check for Reticulum type (safe string check)
+                if 'RETICULUM' in str(backend.get_backend_type()):
+                    logging.info("[CONNECTION_MGR] Delegating to Reticulum Backend")
+                    socketio_logger.info("[CLIENT] Connecting to Reticulum Server...")
+                    
+                    # Delegate directly
+                    session = self.core.backend_manager.connect(remote_callsign)
+                    if session:
+                        self.current_session = session
+                        self.status = ModemState.CONNECTED
+                        # Ensure TNC ref is null/safe for legacy checks
+                        session.tnc_connection = None 
+                        return session
+                    return None
+        # ---------------------------
+
+        # STANDARD PACKET/VARA LOGIC
         if not self.start():
             socketio_logger.error("[TNC] Failed to start TNC connection")
             logging.error("Failed to start TNC connection")
@@ -115,6 +146,7 @@ class ConnectionManager:
                     
                     if self.core.send_ack(session):
                         session.state = ModemState.CONNECTED
+                        self.current_session = session # Track session
                         socketio_logger.info(f"[SESSION] CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         logging.info(f"CONNECTED to {remote_callsign[0]}-{remote_callsign[1]}")
                         
@@ -174,6 +206,10 @@ class ConnectionManager:
             socketio_logger.info(f"[SESSION] Disconnecting session: {session.id}")
             logging.info(f"Disconnecting session: {session.id}")
             session.state = ModemState.DISCONNECTED
+            
+        # Clear current session if it matches
+        if self.current_session and session and self.current_session.id == session.id:
+            self.current_session = None
 
     def initiate_disconnect(self, session):
         """Initiate a disconnect for a session."""
@@ -199,6 +235,11 @@ class ConnectionManager:
 
     def handle_disconnect_request(self, session):
         """Handle a DISCONNECT request from the client."""
+        # Ignore DISCONNECT if server is shutting down
+        if not self.core.running:
+            logging.info(f"Ignoring DISCONNECT during shutdown from {session.remote_callsign if session else 'unknown'}")
+            return False
+            
         if session and session.state in [ModemState.CONNECTED, ModemState.DISCONNECTING]:
             logging.info(f"Handling DISCONNECT request from {session.remote_callsign}")
             socketio_logger.info(f"[CONTROL] Received DISCONNECT message from {session.remote_callsign}")
@@ -214,7 +255,10 @@ class ConnectionManager:
                 # Clean up anyway
                 self.cleanup_session(session)
                 return False
-        return False
+        else:
+            # Session is not in a valid state to handle DISCONNECT
+            logging.info(f"Ignoring DISCONNECT from {session.remote_callsign if session else 'unknown'} - session not active")
+            return False
 
     def handle_disconnect(self, session):
         """Handle a disconnect for a session."""
@@ -222,6 +266,8 @@ class ConnectionManager:
         self.cleanup_session(session)
 
     def handle_incoming_connection(self):
+        from protocol_utils import parse_callsign  # Add this import
+        
         connection_attempt_time = None
         current_connect_session = None
         
@@ -251,7 +297,11 @@ class ConnectionManager:
                 if source_callsign and msg_type == MessageType.CONNECT:
                     socketio_logger.info(f"[CONTROL] Received CONNECT request from {source_callsign}")
                     logging.info(f"Received CONNECT request from {source_callsign}")
-                    session = self.create_session(source_callsign)
+                    
+                    # FIX: Parse callsign string into tuple before creating session
+                    remote_callsign = parse_callsign(source_callsign)
+                    
+                    session = self.create_session(remote_callsign)
                     if not session:
                         socketio_logger.error(f"[SYSTEM] Failed to create session for {source_callsign}")
                         logging.error(f"Failed to create session for {source_callsign}")
@@ -321,17 +371,15 @@ class ConnectionManager:
                             # If we received a DATA_REQUEST during handshake, store it in the session
                             if pending_request:
                                 session.pending_request = pending_request
-                                logging.info(f"Stored pending DATA_REQUEST for processing: {pending_request}")
                             
-                            # Clear connection tracking since we're fully connected now
+                            # Clear connection tracking
                             connection_attempt_time = None
                             current_connect_session = None
                             
                             return session
                         else:
-                            socketio_logger.error(f"[SYSTEM] Failed to receive ACK for CONNECT_ACK from {source_callsign}")
-                            logging.error(f"Failed to receive ACK for CONNECT_ACK from {source_callsign}")
-                            # Mark this as a failed connection attempt and clean up
+                            socketio_logger.warning(f"[SYSTEM] Failed to establish connection with {source_callsign}")
+                            logging.warning(f"Failed to establish connection with {source_callsign}")
                             try:
                                 self.cleanup_session(session)
                             except Exception as e:
@@ -346,11 +394,10 @@ class ConnectionManager:
                     else:
                         socketio_logger.error(f"[SYSTEM] Failed to send CONNECT_ACK to {source_callsign}")
                         logging.error(f"Failed to send CONNECT_ACK to {source_callsign}")
-                        # Clean up failed connection attempt
                         try:
                             self.cleanup_session(session)
                         except Exception as e:
-                            logging.error(f"Error during failed CONNECT_ACK cleanup: {e}")
+                            logging.error(f"Error during CONNECT_ACK failure cleanup: {e}")
                             # Force cleanup even if exception occurred
                             if hasattr(self.core, 'sessions') and session.id in self.core.sessions:
                                 self.core.sessions.pop(session.id, None)
@@ -363,17 +410,20 @@ class ConnectionManager:
                     socketio_logger.info(f"[CONTROL] Received DATA_REQUEST from {source_callsign}")
                     logging.info(f"Received DATA_REQUEST from {source_callsign}")
                     
+                    # Parse callsign for comparison
+                    parsed_callsign = parse_callsign(source_callsign)
+                    
                     # Try to find an existing session for this callsign
                     session = None
                     for existing_session in self.core.sessions.values():
-                        if existing_session.remote_callsign == source_callsign:
+                        if existing_session.remote_callsign == parsed_callsign:
                             session = existing_session
                             break
                     
                     # If no session found, create a new one and mark as connected
                     if not session:
                         logging.info(f"Creating new session for previous callsign {source_callsign}")
-                        session = self.create_session(source_callsign)
+                        session = self.create_session(parsed_callsign)
                         if session:
                             session.state = ModemState.CONNECTED
                             session.last_activity = time.time()

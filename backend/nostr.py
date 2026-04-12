@@ -718,42 +718,59 @@ def get_notes_from_search(search_term, number):
             "message": f"Error searching notes: {str(e)}"
         })
 
-async def async_publish_note(note_json):
-    """Publish a note to configured relays."""
+async def publish_to_single_relay(relay_url, event):
+    """Publish event to a single relay with timeout."""
     client = Client()
-    
     try:
-        # Parse the event
+        await client.add_relay(relay_url)
+        await asyncio.wait_for(client.connect(), timeout=3.0)
+        await asyncio.wait_for(client.send_event(event), timeout=8.0)
+        logging.info(f"[PUBLISH] ✓ Published to {relay_url}")
+        return True
+    except asyncio.TimeoutError:
+        logging.warning(f"[PUBLISH] ✗ Timeout publishing to {relay_url}")
+        return False
+    except Exception as e:
+        logging.warning(f"[PUBLISH] ✗ Error with {relay_url}: {e}")
+        return False
+    finally:
+        try:
+            await client.disconnect()
+        except:
+            pass
+
+async def async_publish_note(note_json):
+    """Publish a note to all configured relays in parallel."""
+    try:
+        # Parse and verify the event
         event = Event.from_json(note_json)
         
-        # Verify the event before publishing
         if not event.verify():
             logging.error("[PUBLISH] Note failed verification")
             return False
-            
-        logging.info(f"[PUBLISH] Publishing note to {len(NOSTR_RELAYS)} relays...")
         
-        # Connect to relays
-        await client.add_relays(NOSTR_RELAYS)
-        await client.connect()
+        event_id = event.id().to_hex()
+        relay_count = len(NOSTR_RELAYS)
+        logging.info(f"[PUBLISH] Publishing note to {relay_count} relays...")
         
-        # Send the event
-        output = await client.send_event(event)
+        # Create tasks for all relays (publish in parallel)
+        tasks = [publish_to_single_relay(relay, event) for relay in NOSTR_RELAYS]
         
-        # Log the output details
-        logging.info(f"[PUBLISH] Event ID: {event.id().to_hex()}")
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Just log that we sent it since we can't check output details yet
-        logging.info("[PUBLISH] Note sent to relays")
+        # Count successes
+        success_count = sum(1 for r in results if r is True)
         
-        # Return true if we got this far without exceptions
-        return True
+        logging.info(f"[PUBLISH] Event ID: {event_id}")
+        logging.info(f"[PUBLISH] Published to {success_count}/{relay_count} relays")
+        
+        # Return true if at least one relay succeeded
+        return success_count > 0
             
     except Exception as e:
         logging.error(f"[PUBLISH] Error publishing note: {e}")
         return False
-    finally:
-        await client.disconnect()
 
 def publish_note(note):
     """Publish received note to relays."""
