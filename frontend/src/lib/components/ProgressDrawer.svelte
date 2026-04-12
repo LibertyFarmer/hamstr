@@ -222,15 +222,15 @@ onMount(() => {
 });
 </script>
 
-<Drawer 
-  bind:hidden
+<Drawer
+  open={!hidden}
   placement="bottom"
   width="w-full sm:w-[440px]"
   class="h-[80vh]"
-  activateClickOutside={true}
+  outsideclose={true}
   transitionType="fly"
   transitionParams={{ y: 200 }}
-  on:hidden={() => dispatch('drawerClosed')}
+  onhide={() => { hidden = true; dispatch('drawerClosed'); }}
 >
   <div class="p-4 space-y-4 flex flex-col h-full">
     <!-- Header -->

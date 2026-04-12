@@ -52,14 +52,14 @@
 </script>
 
 <Drawer 
-  bind:hidden
+  open={!hidden}
   placement="right"
   width="w-[85%] sm:w-[440px]"
   class="h-full overflow-hidden"
-  activateClickOutside={true}
+  outsideclose={true}
   transitionType="fly"
   transitionParams={{ x: 200 }}
-  on:hidden={() => currentView = 'menu'}
+  onhide={() => { hidden = true; currentView = 'menu'; }}
 >
   <div class="h-full flex flex-col">
     <!-- Header -->
