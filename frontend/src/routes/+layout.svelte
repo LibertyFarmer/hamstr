@@ -253,11 +253,11 @@
   {isSending}
   bind:settingsDrawerHidden
   bind:progressDrawerOpen
-  on:clearLogs={() => {
+  onclearLogs={() => {
     console.log('Clear logs event received');
     clearOperationLogs();
   }}
-  on:showRequestModal={() => {
+  onshowRequestModal={() => {
     console.log('Show request modal event received');
     showRequestTypeModal = true;
   }}

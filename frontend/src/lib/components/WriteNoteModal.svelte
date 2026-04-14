@@ -98,15 +98,16 @@
     }
   }
 
-  function handleClose() {
-    if (!isSending) {
-      noteContent = '';
-      replyContext = null;
-      replyType = null;
-      mode = 'write';
-      onClose();
-    }
+function handleClose() {
+  if (!isSending) {
+    isOpen = false;
+    noteContent = '';
+    replyContext = null;
+    replyType = null;
+    mode = 'write';
+    onClose();
   }
+}
 </script>
 
 <Modal

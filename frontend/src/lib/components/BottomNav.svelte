@@ -224,7 +224,7 @@
 {/if}
 
 <div class="fixed bottom-0 left-0 right-0 z-50 bg-slate-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600">
-  <div class="grid grid-cols-4 h-16">
+  <div class="flex justify-center h-16 max-w-lg mx-auto">
 
     <button onclick={goHome}
       class="inline-flex flex-col items-center justify-center px-5 hover:bg-gray-50 dark:hover:bg-gray-700 group">
