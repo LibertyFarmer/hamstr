@@ -202,7 +202,7 @@
 
 <SettingsDrawer
   bind:hidden={settingsDrawerHidden}
-  on:settingsSaved={handleSettingsSaved}
+  onsettingsSaved={(detail) => handleSettingsSaved({ detail })}
 />
 
 <WriteNoteModal
@@ -245,7 +245,7 @@
   {currentOperationLogs}
   {clearOperationLogs}
   {isSending}
-  on:drawerClosed={() => { progressDrawerOpen = false; }}
+  ondrawerClosed={() => { progressDrawerOpen = false; }}
 />
 
 <BottomNav

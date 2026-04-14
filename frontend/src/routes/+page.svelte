@@ -4,17 +4,17 @@
   import { baseURL } from '$lib/stores/baseUrlStore';
   import NoteCard from '$lib/components/NoteCard.svelte';
 
-  let notes = [];
-  let isLoading = true;
-  let error = null;
-  let apiBaseUrl;
-  let pageNumber = 1;
-  let loadingMore = false;
-  let hasMore = true;
   const NOTES_PER_PAGE = 10;
-    
-  $: apiBaseUrl = $baseURL;
-  
+
+  let notes = $state([]);
+  let isLoading = $state(true);
+  let error = $state(null);
+  let pageNumber = $state(1);
+  let loadingMore = $state(false);
+  let hasMore = $state(true);
+
+  let apiBaseUrl = $derived($baseURL);
+
   async function fetchRecentNotes(page = 1, append = false) {
     if (page === 1) {
       isLoading = true;
@@ -27,16 +27,10 @@
       const response = await fetch(`${apiBaseUrl}/api/notes?page=${page}&limit=${NOTES_PER_PAGE}`);
       if (!response.ok) throw new Error('Failed to fetch notes');
       const data = await response.json();
-      
-      if (append) {
-        notes = [...notes, ...data.notes];
-      } else {
-        notes = data.notes;
-      }
-      
+      notes = append ? [...notes, ...data.notes] : data.notes;
       hasMore = data.pagination.has_more;
     } catch (err) {
-      console.error("Error fetching notes:", err);
+      console.error('Error fetching notes:', err);
       error = err.message;
     } finally {
       isLoading = false;
@@ -44,7 +38,7 @@
     }
   }
 
-  function handleScroll(event) {
+  function handleScroll() {
     const bottom = document.documentElement.clientHeight + window.scrollY >= document.documentElement.scrollHeight - 300;
     if (bottom && !loadingMore && hasMore && !isLoading) {
       pageNumber++;
@@ -53,7 +47,7 @@
   }
 
   function handleNotesUpdated(event) {
-    console.log("Notes updated event received");
+    console.log('Notes updated event received');
     pageNumber = 1;
     if (event.detail && event.detail.notes) {
       notes = event.detail.notes;
@@ -70,7 +64,7 @@
     fetchRecentNotes();
     window.addEventListener('notesUpdated', handleNotesUpdated);
     window.addEventListener('scroll', handleScroll);
-    
+
     return () => {
       window.removeEventListener('notesUpdated', handleNotesUpdated);
       window.removeEventListener('scroll', handleScroll);
@@ -78,7 +72,7 @@
   });
 </script>
 
-<svelte:window on:scroll={handleScroll}/>
+<svelte:window onscroll={handleScroll} />
 
 <div class="w-full min-h-screen bg-gray-50 dark:bg-gray-900">
   <div class="container mx-auto px-4 py-8 pb-20">
@@ -104,7 +98,6 @@
             {/each}
           </div>
         {/if}
-        
         {#if loadingMore}
           <div class="flex justify-center p-4">
             <Spinner size="6" />
