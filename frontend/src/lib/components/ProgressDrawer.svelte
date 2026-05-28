@@ -19,12 +19,6 @@
     if (hidden) ondrawerClosed?.();
   });
 
-  $effect(() => {
-  if (!hidden) {
-    clearOperationLogs();
-    untrack(() => { translatedMessages = []; });
-  }
-  });
 
   function formatTime(timestamp) {
     return timestamp.split(' ')[1];
