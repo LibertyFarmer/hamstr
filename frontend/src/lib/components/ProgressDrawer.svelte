@@ -12,30 +12,18 @@
     ondrawerClosed
   } = $props();
 
-  let packetPhaseState = $derived(logs.reduce((state, log) => {
-  const msg = log.message;
-  // Pre-packet milestones
-  if (msg.includes('Sending CONNECTION REQUEST') || msg.includes('Connecting to'))
-    state.pre = Math.max(state.pre, 8);
-  if (msg.includes('[SESSION] CONNECTED to'))
-    state.pre = Math.max(state.pre, 15);
-  if (msg.includes('DATA_REQUEST') || msg.includes('data request') || msg.includes('READY'))
-    state.pre = Math.max(state.pre, 22);
-  // Post-packet milestones
-  if (msg.includes('[CONTROL] Received DONE') || msg.includes('DONE_ACK'))
-    state.post = Math.max(state.post, 87);
-  if (msg.includes('[SESSION] Client initiating disconnect'))
-    state.post = Math.max(state.post, 93);
-  if (msg.includes('[SESSION] Client disconnect complete'))
-    state.done = true;
-  return state;
-}, { pre: 0, post: 0, done: false }));
-
   let logContainer = $state(null);
   let translatedMessages = $state([]);
 
   $effect(() => {
     if (hidden) ondrawerClosed?.();
+  });
+
+  $effect(() => {
+  if (!hidden) {
+    clearOperationLogs();
+    untrack(() => { translatedMessages = []; });
+  }
   });
 
   function formatTime(timestamp) {
@@ -46,6 +34,7 @@
     if (logContainer) logContainer.scrollTop = 0;
   }
 
+  // logs must be defined before any derived state that uses it
   let logs = $derived($currentOperationLogs || []);
 
   let packetInfo = $derived(logs.reduce((latest, log) => {
@@ -124,21 +113,26 @@
   let isVARA = $derived(logs.some(log => log.message.includes('VARA')));
   let isReticulum = $derived(!isVARA && logs.some(log => /\[SESSION\] CONNECTED$/.test(log.message)));
 
-  let progress = $derived(
-    isVARA ? varaProgress :
-    isReticulum ? reticulumProgress :
-    packetPhaseState.done ? 100 :
-    packetPhaseState.post > 0 ? packetPhaseState.post :
-    packetInfo.total > 0 ? 25 + (packetInfo.current / packetInfo.total) * 60 :
-    packetPhaseState.pre
-  );
-
-  let pttStatus = $derived(logs.reduce((status, log) => {
+  // Packet phase state — must come after logs
+  let packetPhaseState = $derived(logs.reduce((state, log) => {
     const msg = log.message;
-    if (msg.includes('[CONTROL] ⚡ PTT ON')) return 'TX';
-    if (msg.includes('[CONTROL] ⚡ PTT OFF')) return 'RX';
-    return status;
-  }, 'RX'));
+    // Pre-packet milestones (0–25%)
+    if (msg.includes('Sending CONNECTION REQUEST') || msg.includes('Connecting to'))
+      state.pre = Math.max(state.pre, 8);
+    if (msg.includes('[SESSION] CONNECTED to'))
+      state.pre = Math.max(state.pre, 15);
+    if (msg.includes('DATA_REQUEST') || msg.includes('data request') || msg.includes('READY'))
+      state.pre = Math.max(state.pre, 22);
+    // Post-packet milestones (85–100%)
+    if (msg.includes('[CONTROL] Received DONE') || msg.includes('DONE_ACK'))
+      state.post = Math.max(state.post, 87);
+    if (msg.includes('[SESSION] Client initiating disconnect'))
+      state.post = Math.max(state.post, 93);
+    // Clean client-initiated disconnect complete
+    if (msg.includes('[SESSION] Client disconnect complete'))
+      state.done = true;
+    return state;
+  }, { pre: 0, post: 0, done: false }));
 
   let connectionStatus = $derived(logs.reduce((status, log) => {
     const msg = log.message;
@@ -156,6 +150,43 @@
     if (msg.includes('[SESSION] DISCONNECTED')) return 'DISCONNECTED';
     return status;
   }, 'DISCONNECTED'));
+
+  // Operation is complete when:
+  // - clean client disconnect (packetPhaseState.done), or
+  // - DISCONNECTED status reached, or
+  // - DISCONNECTING + post phase hit 93% (note-write path: server ACKs our disconnect
+  //   but [SESSION] Client disconnect complete is never emitted)
+  let operationComplete = $derived(
+    packetPhaseState.done ||
+    (connectionStatus === 'DISCONNECTING' && packetPhaseState.post >= 93)
+  );
+
+  let progress = $derived(
+    isVARA ? varaProgress :
+    isReticulum ? reticulumProgress :
+    operationComplete ? 100 :
+    packetPhaseState.post > 0 ? packetPhaseState.post :
+    packetInfo.total > 0 ? 25 + (packetInfo.current / packetInfo.total) * 60 :
+    packetPhaseState.pre
+  );
+
+  let pttStatus = $derived(logs.reduce((status, log) => {
+    const msg = log.message;
+    if (msg.includes('[CONTROL] ⚡ PTT ON')) return 'TX';
+    if (msg.includes('[CONTROL] ⚡ PTT OFF')) return 'RX';
+    return status;
+  }, 'RX'));
+
+  // Auto-close drawer 2.5 seconds after operation completes
+  $effect(() => {
+    if (operationComplete && !hidden) {
+      const timer = setTimeout(() => {
+        hidden = true;
+        ondrawerClosed?.();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  });
 
   // Append new logs to translatedMessages — untrack the read to avoid circular tracking
   $effect(() => {
@@ -210,15 +241,15 @@
   outsideclose={true}
   transitionType="fly"
   transitionParams={{ y: 200 }}
+  closeButton={false}
   onhide={() => { hidden = true; ondrawerClosed?.(); }}
 >
   <div class="p-4 space-y-4 flex flex-col h-full">
 
-    <!-- Header -->
-    <div class="flex items-center justify-between border-b pb-3">
-      <h3 class="text-lg font-semibold">Operation Status</h3>
-      <Button size="xs" color="light" class="ml-auto" onclick={closeDrawer}>✕</Button>
-    </div>
+<!-- Header -->
+<div class="flex items-center justify-between border-b pb-3">
+  <h3 class="text-lg font-semibold">Operation Status</h3>
+</div>
 
     <!-- Status Section -->
     <div class="grid grid-cols-3 gap-4">
