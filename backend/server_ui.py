@@ -8,6 +8,8 @@ import queue
 from datetime import datetime
 from typing import Optional
 import os
+os.environ['HAMSTR_ROLE'] = 'server'
+import config
 import platform
 import glob
 import re
@@ -24,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QAction
 
-import config
+
 
 def get_available_serial_ports():
     """Cross-platform function to detect available serial ports."""

@@ -12,6 +12,25 @@
     ondrawerClosed
   } = $props();
 
+  let packetPhaseState = $derived(logs.reduce((state, log) => {
+  const msg = log.message;
+  // Pre-packet milestones
+  if (msg.includes('Sending CONNECTION REQUEST') || msg.includes('Connecting to'))
+    state.pre = Math.max(state.pre, 8);
+  if (msg.includes('[SESSION] CONNECTED to'))
+    state.pre = Math.max(state.pre, 15);
+  if (msg.includes('DATA_REQUEST') || msg.includes('data request') || msg.includes('READY'))
+    state.pre = Math.max(state.pre, 22);
+  // Post-packet milestones
+  if (msg.includes('[CONTROL] Received DONE') || msg.includes('DONE_ACK'))
+    state.post = Math.max(state.post, 87);
+  if (msg.includes('[SESSION] Client initiating disconnect'))
+    state.post = Math.max(state.post, 93);
+  if (msg.includes('[SESSION] Client disconnect complete'))
+    state.done = true;
+  return state;
+}, { pre: 0, post: 0, done: false }));
+
   let logContainer = $state(null);
   let translatedMessages = $state([]);
 
@@ -106,9 +125,12 @@
   let isReticulum = $derived(!isVARA && logs.some(log => /\[SESSION\] CONNECTED$/.test(log.message)));
 
   let progress = $derived(
-    isVARA ? varaProgress
-    : isReticulum ? reticulumProgress
-    : (packetInfo.total > 0 ? (packetInfo.current / packetInfo.total) * 100 : 0)
+    isVARA ? varaProgress :
+    isReticulum ? reticulumProgress :
+    packetPhaseState.done ? 100 :
+    packetPhaseState.post > 0 ? packetPhaseState.post :
+    packetInfo.total > 0 ? 25 + (packetInfo.current / packetInfo.total) * 60 :
+    packetPhaseState.pre
   );
 
   let pttStatus = $derived(logs.reduce((status, log) => {

@@ -1,562 +1,259 @@
-# config.py - Updated to handle NETWORK section and backend settings
+# config.py
+# Role-based config loader. Set HAMSTR_ROLE env var before importing:
+#   os.environ['HAMSTR_ROLE'] = 'client'  # in web_app.py
+#   os.environ['HAMSTR_ROLE'] = 'server'  # in server_ui.py
+# Each role reads only its own settings file. settings.ini is a silent
+# read-only fallback for existing installs and will be removed in a future version.
+
+import os
 import pathlib
 import configparser
 import shutil
 import logging
 from typing import List
 
-# --- Auto-provisioning: copy templates if settings files don't exist ---
-_data_dir = pathlib.Path(__file__).parent.absolute() / "data"
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+_base = pathlib.Path(__file__).parent.absolute()
+_data = _base / "data"
 
-_client_ini = _data_dir / "client_settings.ini"
-_client_template = _data_dir / "client_settings.ini.template"
+_client_ini   = _data / "client_settings.ini"
+_client_tmpl  = _data / "client_settings.ini.template"
+_server_ini   = _data / "server_settings.ini"
+_server_tmpl  = _data / "server_settings.ini.template"
+_legacy_ini   = _base / "settings.ini"   # read-only fallback, never written
 
-_server_ini = _data_dir / "server_settings.ini"
-_server_template = _data_dir / "server_settings.ini.template"
-
-for _ini, _template in [(_client_ini, _client_template), (_server_ini, _server_template)]:
+# ---------------------------------------------------------------------------
+# Auto-provision: copy template → ini on first run
+# ---------------------------------------------------------------------------
+for _ini, _tmpl in [(_client_ini, _client_tmpl), (_server_ini, _server_tmpl)]:
     if not _ini.exists():
-        if _template.exists():
-            shutil.copy(_template, _ini)
+        if _tmpl.exists():
+            shutil.copy(_tmpl, _ini)
             logging.info(f"[CONFIG] Created {_ini.name} from template")
         else:
             _ini.touch()
             logging.warning(f"[CONFIG] Template missing, created empty {_ini.name}")
-# --- End auto-provisioning ---
 
-config_path = pathlib.Path(__file__).parent.absolute() / "settings.ini"
-client_callsign_path = pathlib.Path(__file__).parent.absolute() / "data/client_settings.ini"
-server_callsign_path = pathlib.Path(__file__).parent.absolute() / "data/server_settings.ini"
+# ---------------------------------------------------------------------------
+# Role detection
+# ---------------------------------------------------------------------------
+ROLE = os.environ.get('HAMSTR_ROLE', 'client')
 
-config = configparser.ConfigParser()
-config.read([config_path, client_callsign_path, server_callsign_path])
+# ---------------------------------------------------------------------------
+# Load configs
+# Each loads legacy settings.ini first (lower priority), then its own file
+# (higher priority) so existing installs keep working during transition.
+# ---------------------------------------------------------------------------
+client_config = configparser.ConfigParser()
+client_config.read([_legacy_ini, _client_ini])
 
 server_config = configparser.ConfigParser()
-server_config.read([config_path, server_callsign_path])
+server_config.read([_legacy_ini, _server_ini])
 
-client_config = configparser.ConfigParser()
-client_config.read([config_path, client_callsign_path])
+# Active config for this process
+_cfg     = client_config if ROLE == 'client' else server_config
+_ini_path = _client_ini  if ROLE == 'client' else _server_ini
 
-def update_config(section, option, value):
-    """Update the settings in the appropriate INI file."""
-    
-    if section == 'RADIO':
-        if option == 'client_callsign' or option == 'CLIENT_CALLSIGN':
-            # Handle client callsign - route to client_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(client_callsign_path)
-            if not config_to_update.has_section('RADIO'):
-                config_to_update.add_section('RADIO')
-            config_to_update.set(section, 'client_callsign', str(value))
-            with open(client_callsign_path, 'w') as f:
-                config_to_update.write(f)
-        elif option == 'hamstr_server' or option == 'HAMSTR_SERVER':
-            # Handle target server callsign - route to client_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(client_callsign_path)
-            if not config_to_update.has_section('RADIO'):
-                config_to_update.add_section('RADIO')
-            config_to_update.set(section, 'hamstr_server', str(value))
-            with open(client_callsign_path, 'w') as f:
-                config_to_update.write(f)
-        elif option == 'SERVER_CALLSIGN':
-            # Handle server callsign - route to server_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(server_callsign_path)
-            if not config_to_update.has_section('RADIO'):
-                config_to_update.add_section('RADIO')
-            config_to_update.set(section, option, str(value))
-            with open(server_callsign_path, 'w') as f:
-                config_to_update.write(f)
-    elif section == 'TNC':
-        if option.startswith('CLIENT_') or option in ['client_host', 'client_port'] or option in ['connection_type', 'serial_port', 'serial_speed']:
-            # Handle client TNC settings - route to client_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(client_callsign_path)
-            if not config_to_update.has_section('TNC'):
-                config_to_update.add_section('TNC')
-            
-            # Always convert to lowercase for storage (except serial settings)
-            if option == 'client_host' or option == 'CLIENT_HOST':
-                lower_option = 'client_host'
-            elif option == 'client_port' or option == 'CLIENT_PORT':
-                lower_option = 'client_port'
-            elif option in ['connection_type', 'serial_port', 'serial_speed']:
-                lower_option = option  # Keep as-is for new serial settings
-            else:
-                lower_option = option.lower()
-                
-            config_to_update.set(section, lower_option, str(value))
-            with open(client_callsign_path, 'w') as f:
-                config_to_update.write(f)
-        elif option.startswith('SERVER_') or option in ['server_host', 'server_port', 'CONNECTION_TYPE', 'SERIAL_PORT', 'SERIAL_SPEED']:
-            # Handle server TNC settings - route to server_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(server_callsign_path)
-            if not config_to_update.has_section('TNC'):
-                config_to_update.add_section('TNC')
-            config_to_update.set(section, option, str(value))
-            with open(server_callsign_path, 'w') as f:
-                config_to_update.write(f)
-    elif section == 'NETWORK':
-        # NEW: Handle backend settings - route based on specific settings
-        if option == 'backend_type':
-            # Backend type goes to main settings.ini (shared setting)
-            main_config = configparser.ConfigParser()
-            main_config.read(config_path)
-            if not main_config.has_section('NETWORK'):
-                main_config.add_section('NETWORK')
-            main_config.set(section, option, str(value))
-            with open(config_path, 'w') as f:
-                main_config.write(f)
-        else:
-            # Other NETWORK settings might be client/server specific in the future
-            # For now, put them in main settings.ini
-            main_config = configparser.ConfigParser()
-            main_config.read(config_path)
-            if not main_config.has_section('NETWORK'):
-                main_config.add_section('NETWORK')
-            main_config.set(section, option, str(value))
-            with open(config_path, 'w') as f:
-                main_config.write(f)
-    elif section in ['VARA', 'RETICULUM', 'FLDIGI']:
-        # NEW: Handle backend-specific settings - go to main settings.ini for now
-        # Future: might split these between client/server configs
-        main_config = configparser.ConfigParser()
-        main_config.read(config_path)
-        if not main_config.has_section(section):
-            main_config.add_section(section)
-        main_config.set(section, option, str(value))
-        with open(config_path, 'w') as f:
-            main_config.write(f)
-    elif section == 'NOSTR':
-        if option == 'RELAYS':
-            # Handle NOSTR RELAYS - route to server_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(server_callsign_path)
-            if not config_to_update.has_section('NOSTR'):
-                config_to_update.add_section('NOSTR')
-            config_to_update.set(section, option, str(value))
-            with open(server_callsign_path, 'w') as f:
-                config_to_update.write(f)
-        elif option == 'DEFAULT_NOTE_REQUEST_COUNT' or option == 'default_note_request_count':
-            # Handle client NOSTR settings - route to client_settings.ini
-            config_to_update = configparser.ConfigParser()
-            config_to_update.read(client_callsign_path)
-            if not config_to_update.has_section('NOSTR'):
-                config_to_update.add_section('NOSTR')
-            config_to_update.set(section, 'default_note_request_count', str(value))
-            with open(client_callsign_path, 'w') as f:
-                config_to_update.write(f)
-        else:
-            # Other NOSTR settings go to main settings.ini
-            main_config = configparser.ConfigParser()
-            main_config.read(config_path)
-            if not main_config.has_section(section):
-                main_config.add_section(section)
-            main_config.set(section, option, str(value))
-            with open(config_path, 'w') as f:
-                main_config.write(f)
-    else:  # For main settings.ini only (GENERAL, PTT, etc.)
-        # Only read and update the main settings file
-        main_config = configparser.ConfigParser()
-        main_config.read(config_path)
-        if not main_config.has_section(section):
-            main_config.add_section(section)
-        main_config.set(section, option, str(value))
-        with open(config_path, 'w') as f:
-            main_config.write(f)
+# Legacy alias — some modules do `config.config.get(...)` after importing
+config = _cfg
 
-def parse_tuple(input):
-    # Remove parentheses and split by comma
-    parts = input.strip('()').split(',')
-    if len(parts) != 2:
-        return '', 0  # Default values if parsing fails
-    callsign = parts[0].strip()
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+def _g(section, option, fallback=None, cast=str):
+    """Get a value from the active config with a typed fallback."""
     try:
-        ssid = int(parts[1].strip())
-    except ValueError:
-        ssid = 0  # Default to 0 if SSID is not a valid integer
-    return callsign, ssid
+        raw = _cfg.get(section, option)
+        if cast is bool:
+            return raw.strip().lower() in ('true', '1', 'yes')
+        return cast(raw)
+    except Exception:
+        return fallback
 
-def get_relay_list() -> List[str]:
-    """Get list of relays from server config."""
-    try:
-        relay_string = server_config.get('NOSTR', 'RELAYS')
-        return [relay.strip() for relay in relay_string.split(',')]
-    except:
-        # Fallback to main config if server config doesn't have relays
-        try:
-            relay_string = config.get('NOSTR', 'relays')
-            return [relay.strip() for relay in relay_string.split(',')]
-        except:
-            return []
 
-# General settings
-try:
-    SEND_RETRIES = config.getint('GENERAL', 'send_retries')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    SEND_RETRIES = 3  # Default retries
+# ---------------------------------------------------------------------------
+# GENERAL — packet protocol timing
+# ---------------------------------------------------------------------------
+ACK_TIMEOUT                  = _g('GENERAL', 'ack_timeout',                  15,   int)
+SEND_RETRIES                 = _g('GENERAL', 'send_retries',                  3,    int)
+DISCONNECT_RETRY             = _g('GENERAL', 'disconnect_retry',              1,    int)
+MAX_PACKET_SIZE              = _g('GENERAL', 'max_packet_size',               200,  int)
+CONNECTION_TIMEOUT           = _g('GENERAL', 'connection_timeout',            120,  int)
+CONNECTION_ATTEMPT_TIMEOUT   = _g('GENERAL', 'connection_attempt_timeout',    10,   int)
+KEEP_ALIVE_INTERVAL          = _g('GENERAL', 'keep_alive_interval',           20,   int)
+KEEP_ALIVE_RETRY_INTERVAL    = _g('GENERAL', 'keep_alive_retry_interval',     5,    int)
+KEEP_ALIVE_FINAL_INTERVAL    = _g('GENERAL', 'keep_alive_final_interval',     10,   int)
+SHUTDOWN_TIMEOUT             = _g('GENERAL', 'shutdown_timeout',              20,   int)
+PACKET_SEND_DELAY            = _g('GENERAL', 'packet_send_delay',             0.4,  float)
+DISCONNECT_TIMEOUT           = _g('GENERAL', 'disconnect_timeout',            5,    int)
+MISSING_PACKETS_TIMEOUT      = _g('GENERAL', 'missing_packets_timeout',       50,   int)
+BAUD_RATE                    = _g('GENERAL', 'baud_rate',                     300,  int)
+NO_ACK_TIMEOUT               = _g('GENERAL', 'no_ack_timeout',                40,   int)
+NO_PACKET_TIMEOUT            = _g('GENERAL', 'no_packet_timeout',             50,   int)
+MISSING_PACKETS_THRESHOLD    = _g('GENERAL', 'missing_packets_threshold',     0.5,  float)
+READY_TIMEOUT                = _g('GENERAL', 'ready_timeout',                 20,   int)
+CONNECTION_STABILIZATION_DELAY = _g('GENERAL', 'connection_stabilization_delay', 1.1, float)
 
-try:
-    DISCONNECT_RETRY = config.getint('GENERAL', 'disconnect_retry')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    DISCONNECT_RETRY = 1  # Default disconnect retry
+# Extra GENERAL values read by various modules
+CONNECT_ACK_TIMEOUT   = _g('GENERAL', 'connect_ack_timeout',   ACK_TIMEOUT, int)
+MESSAGE_REQUEST_BUFFER = _g('GENERAL', 'message_request_buffer', 5,          int)
+PACKET_RESEND_DELAY   = _g('GENERAL', 'packet_resend_delay',    0.3,        float)
 
-try:
-    ACK_TIMEOUT = config.getint('GENERAL', 'ack_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    ACK_TIMEOUT = 15  # Default ACK timeout in seconds
-
-try:
-    MAX_PACKET_SIZE = config.getint('GENERAL', 'max_packet_size')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    MAX_PACKET_SIZE = 200  # Default max packet size in bytes
-
-try:
-    CONNECTION_TIMEOUT = config.getint('GENERAL', 'connection_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    CONNECTION_TIMEOUT = 95  # Default connection timeout in seconds
-
-try:
-    CONNECTION_ATTEMPT_TIMEOUT = config.getint('GENERAL', 'connection_attempt_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    CONNECTION_ATTEMPT_TIMEOUT = 10  # Default connection attempt timeout in seconds
-
-try:
-    KEEP_ALIVE_INTERVAL = config.getint('GENERAL', 'keep_alive_interval')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    KEEP_ALIVE_INTERVAL = 20  # Default keep-alive interval in seconds
-
-try:
-    KEEP_ALIVE_RETRY_INTERVAL = config.getint('GENERAL', 'keep_alive_retry_interval')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    KEEP_ALIVE_RETRY_INTERVAL = 5  # Default keep-alive retry interval in seconds
-
-try:
-    KEEP_ALIVE_FINAL_INTERVAL = config.getint('GENERAL', 'keep_alive_final_interval')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    KEEP_ALIVE_FINAL_INTERVAL = 10  # Default final keep-alive interval in seconds
-
-try:
-    SHUTDOWN_TIMEOUT = config.getint('GENERAL', 'shutdown_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    SHUTDOWN_TIMEOUT = 20  # Default shutdown timeout in seconds
-
-try:
-    PACKET_SEND_DELAY = config.getfloat('GENERAL', 'packet_send_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PACKET_SEND_DELAY = 0.4  # Default packet send delay in seconds
-
-try:
-    DISCONNECT_TIMEOUT = config.getint('GENERAL', 'disconnect_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    DISCONNECT_TIMEOUT = 5  # Default disconnect timeout in seconds
-
-try:
-    MISSING_PACKETS_TIMEOUT = config.getint('GENERAL', 'missing_packets_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    MISSING_PACKETS_TIMEOUT = 50  # Default missing packets timeout in seconds
-
-try:
-    BAUD_RATE = config.getint('GENERAL', 'baud_rate')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    BAUD_RATE = 300  # Default baud rate
-
-try:
-    NO_ACK_TIMEOUT = config.getint('GENERAL', 'no_ack_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    NO_ACK_TIMEOUT = 40  # Default no ACK timeout in seconds
-
-try:
-    NO_PACKET_TIMEOUT = config.getint('GENERAL', 'no_packet_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    NO_PACKET_TIMEOUT = 50  # Default no packet timeout in seconds
-
-try:
-    MISSING_PACKETS_THRESHOLD = config.getfloat('GENERAL', 'missing_packets_threshold')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    MISSING_PACKETS_THRESHOLD = 0.5  # Default missing packets threshold
-
-try:
-    READY_TIMEOUT = config.getint('GENERAL', 'ready_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    READY_TIMEOUT = 20  # Default READY timeout in seconds
-
-try:
-    CONNECTION_STABILIZATION_DELAY = config.getfloat('GENERAL', 'connection_stabilization_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    CONNECTION_STABILIZATION_DELAY = 1.0  # Default stabilization delay in seconds
-
-# PTT settings
-try:
-    PTT_TX_DELAY = config.getfloat('PTT', 'tx_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_TX_DELAY = 0.25  # Default TX delay in seconds
-
-try:
-    PTT_RX_DELAY = config.getfloat('PTT', 'rx_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_RX_DELAY = 0.25  # Default RX delay in seconds
-
-try:
-    PTT_TAIL = config.getfloat('PTT', 'ptt_tail')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_TAIL = 0.1  # Default PTT tail in seconds
-
-try:
-    PTT_ACK_SPACING = config.getfloat('PTT', 'ack_spacing')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PTT_ACK_SPACING = 0.5  # Default ACK spacing in seconds
-
-# Add fallback values for any settings that may be missing
-try:
-    CONNECT_ACK_TIMEOUT = config.getint('GENERAL', 'connect_ack_timeout')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    CONNECT_ACK_TIMEOUT = ACK_TIMEOUT  # Use ACK_TIMEOUT as fallback
-
-try:
-    MESSAGE_REQUEST_BUFFER = config.getint('GENERAL', 'message_request_buffer')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    MESSAGE_REQUEST_BUFFER = 5  # Default buffer
-
-try:
-    PACKET_RESEND_DELAY = config.getfloat('GENERAL', 'packet_resend_delay')
-except (configparser.NoSectionError, configparser.NoOptionError):
-    PACKET_RESEND_DELAY = 0.3  # Default resend delay
-
-# Backward compatibility alias
+# Backward-compat alias
 RETRY_COUNT = SEND_RETRIES
 
-# Get NOSTR relays
+# ---------------------------------------------------------------------------
+# PTT (legacy packet PTT timing)
+# ---------------------------------------------------------------------------
+PTT_TX_DELAY   = _g('PTT', 'tx_delay',    0.25, float)
+PTT_RX_DELAY   = _g('PTT', 'rx_delay',    0.25, float)
+PTT_TAIL       = _g('PTT', 'ptt_tail',    0.1,  float)
+PTT_ACK_SPACING = _g('PTT', 'ack_spacing', 0.5,  float)
+
+# ---------------------------------------------------------------------------
+# NETWORK — backend selection
+# ---------------------------------------------------------------------------
+BACKEND_TYPE = _g('NETWORK', 'backend_type', 'packet')
+
+# ---------------------------------------------------------------------------
+# TNC / RADIO (client-side names)
+# ---------------------------------------------------------------------------
+CONNECTION_TYPE = _g('TNC', 'connection_type', 'tcp')
+SERIAL_PORT     = _g('TNC', 'serial_port',     'COM3')
+SERIAL_SPEED    = _g('TNC', 'serial_speed',    57600, int)
+
+# Client TNC address
+CLIENT_HOST = _g('TNC', 'client_host', 'localhost')
+CLIENT_PORT = _g('TNC', 'client_port', 8001, int)
+
+# Server TNC address (read by server-side networking code)
+SERVER_HOST = _g('TNC', 'server_host', 'localhost')
+SERVER_PORT = _g('TNC', 'server_port', 8002, int)
+
+# Server TNC serial (uppercase keys from server template)
+SERVER_CONNECTION_TYPE = _g('TNC', 'connection_type', 'tcp')
+SERVER_SERIAL_PORT     = _g('TNC', 'serial_port',     'COM3')
+SERVER_SERIAL_SPEED    = _g('TNC', 'serial_speed',    57600, int)
+
+# ---------------------------------------------------------------------------
+# Callsigns
+# ---------------------------------------------------------------------------
+def parse_tuple(raw: str):
+    """Parse '(CALLSIGN, SSID)' → (str, int). Returns ('', 0) on failure."""
+    try:
+        parts = raw.strip().strip('()').split(',')
+        return parts[0].strip(), int(parts[1].strip())
+    except Exception:
+        return '', 0
+
+def _callsign(section, option, fallback='(CALLSIGN, 0)'):
+    raw = _g(section, option, fallback)
+    return parse_tuple(raw)
+
+C_CALLSIGN   = _callsign('RADIO', 'client_callsign')
+HAMSTR_SERVER = _callsign('RADIO', 'hamstr_server',   '(SERVER, 0)')
+S_CALLSIGN   = _callsign('RADIO', 'server_callsign',  '(SERVER, 0)')
+
+# ---------------------------------------------------------------------------
+# NOSTR
+# ---------------------------------------------------------------------------
+DEFAULT_NOTE_REQUEST_COUNT = _g('NOSTR', 'default_note_request_count', 2, int)
+
+def get_relay_list() -> List[str]:
+    """Return relay list from active config."""
+    raw = _g('NOSTR', 'relays', 'wss://relay.nostr.band/,wss://relay.damus.io')
+    return [r.strip() for r in raw.split(',') if r.strip()]
+
 NOSTR_RELAYS = get_relay_list()
 
-# Force reload client config to get latest values
-client_config.read([config_path, client_callsign_path])
+# ---------------------------------------------------------------------------
+# VARA
+# ---------------------------------------------------------------------------
+VARA_HOST               = _g('VARA', 'vara_host',           '127.0.0.1')
+VARA_BANDWIDTH          = _g('VARA', 'bandwidth',            2300, int)
+VARA_ARQ_TIMEOUT        = _g('VARA', 'arq_timeout',          60,   int)
+VARA_CHAT_MODE          = _g('VARA', 'chat_mode',            'ON')
+VARA_CONNECTION_TIMEOUT = _g('VARA', 'connection_timeout',   30,   int)
+VARA_TEST_MODE          = _g('VARA', 'vara_test_mode',       False, bool)
 
-# Client TNC connection settings
-try:
-    CONNECTION_TYPE = client_config.get('TNC', 'connection_type')
-except:
-    CONNECTION_TYPE = 'tcp'  # Default to TCP
+# Port numbers — each template already has the correct defaults per role
+VARA_COMMAND_PORT = _g('VARA', 'command_port', 8300 if ROLE == 'client' else 8400, int)
+VARA_DATA_PORT    = _g('VARA', 'data_port',    8301 if ROLE == 'client' else 8401, int)
 
-try:
-    SERIAL_PORT = client_config.get('TNC', 'serial_port')
-except:
-    SERIAL_PORT = 'COM3'  # Default Windows port
+# Convenience aliases used by existing code
+CLIENT_VARA_COMMAND_PORT = VARA_COMMAND_PORT if ROLE == 'client' else _g('VARA', 'command_port', 8300, int)
+CLIENT_VARA_DATA_PORT    = VARA_DATA_PORT    if ROLE == 'client' else _g('VARA', 'data_port',    8301, int)
+SERVER_VARA_COMMAND_PORT = VARA_COMMAND_PORT if ROLE == 'server' else _g('VARA', 'command_port', 8400, int)
+SERVER_VARA_DATA_PORT    = VARA_DATA_PORT    if ROLE == 'server' else _g('VARA', 'data_port',    8401, int)
 
-try:
-    SERIAL_SPEED = client_config.getint('TNC', 'serial_speed')
-except:
-    SERIAL_SPEED = 57600  # Default baud rate
+# PTT — read from active config; both CLIENT_ and SERVER_ aliases point to same values
+_VARA_USE_PTT         = _g('VARA', 'use_ptt',          True,    bool)
+_VARA_PTT_PORT        = _g('VARA', 'ptt_serial_port',  'COM3')
+_VARA_PTT_BAUD        = _g('VARA', 'ptt_serial_baud',  38400,   int)
+_VARA_PTT_METHOD      = _g('VARA', 'ptt_method',       'BOTH')
+_VARA_PRE_PTT_DELAY   = _g('VARA', 'pre_ptt_delay',    0.1,     float)
+_VARA_POST_PTT_DELAY  = _g('VARA', 'post_ptt_delay',   0.1,     float)
 
-# Client settings from client_config
-try:
-    CLIENT_HOST = client_config.get('TNC','client_host')
-except:
-    CLIENT_HOST = config.get('TNC','client_host', fallback='localhost')
+CLIENT_VARA_USE_PTT         = _VARA_USE_PTT
+CLIENT_VARA_PTT_SERIAL_PORT = _VARA_PTT_PORT
+CLIENT_VARA_PTT_SERIAL_BAUD = _VARA_PTT_BAUD
+CLIENT_VARA_PTT_METHOD      = _VARA_PTT_METHOD
+CLIENT_VARA_PRE_PTT_DELAY   = _VARA_PRE_PTT_DELAY
+CLIENT_VARA_POST_PTT_DELAY  = _VARA_POST_PTT_DELAY
 
-try:
-    CLIENT_PORT = client_config.getint('TNC','client_port')
-except:
-    CLIENT_PORT = config.getint('TNC','client_port', fallback=8001)
+SERVER_VARA_USE_PTT         = _VARA_USE_PTT
+SERVER_VARA_PTT_SERIAL_PORT = _VARA_PTT_PORT
+SERVER_VARA_PTT_SERIAL_BAUD = _VARA_PTT_BAUD
+SERVER_VARA_PTT_METHOD      = _VARA_PTT_METHOD
+SERVER_VARA_PRE_PTT_DELAY   = _VARA_PRE_PTT_DELAY
+SERVER_VARA_POST_PTT_DELAY  = _VARA_POST_PTT_DELAY
 
-try:
-    C_CALLSIGN = parse_tuple(client_config.get('RADIO','client_callsign'))
-except:
-    C_CALLSIGN = parse_tuple(config.get('RADIO','client_callsign', fallback='(CALLSIGN, 0)'))
+# ---------------------------------------------------------------------------
+# RETICULUM
+# ---------------------------------------------------------------------------
+RETICULUM_CONFIG_DIR         = _g('RETICULUM', 'reticulum_config_dir', None)
+RETICULUM_SERVER_CONFIG_DIR  = RETICULUM_CONFIG_DIR   # same file per role
 
-try:
-    HAMSTR_SERVER = parse_tuple(client_config.get('RADIO','hamstr_server'))
-except:
-    HAMSTR_SERVER = ('SERVER', 0)  # Default only - no fallback to server settings
+RETICULUM_HAMSTR_SERVER_HASH   = _g('RETICULUM', 'hamstr_server_hash',   None)
+RETICULUM_HAMSTR_SERVER_PUBKEY = _g('RETICULUM', 'hamstr_server_pubkey', None)
+RETICULUM_HAMSTR_SERVER_GRID   = _g('RETICULUM', 'hamstr_server_grid',   None)
+RETICULUM_CONNECTION_TIMEOUT   = _g('RETICULUM', 'connection_timeout',   60,    int)
+RETICULUM_KEEPALIVE_INTERVAL   = _g('RETICULUM', 'keepalive_interval',   0,     int)
 
-try:
-    DEFAULT_NOTE_REQUEST_COUNT = client_config.getint('NOSTR', 'default_note_request_count')
-except:
-    DEFAULT_NOTE_REQUEST_COUNT = config.getint('NOSTR', 'default_note_request_count', fallback=1)
+RETICULUM_SERVER_GRID          = _g('RETICULUM', 'server_grid',          None)
+RETICULUM_ANNOUNCE_INTERVAL    = _g('RETICULUM', 'announce_interval',    21600, int)
 
-# Server TNC connection settings
-try:
-    SERVER_CONNECTION_TYPE = server_config.get('TNC', 'CONNECTION_TYPE')
-except:
-    SERVER_CONNECTION_TYPE = 'tcp'  # Default to TCP
+# ---------------------------------------------------------------------------
+# FLDIGI
+# ---------------------------------------------------------------------------
+FLDIGI_HOST = _g('FLDIGI', 'fldigi_host', 'localhost')
+FLDIGI_PORT = _g('FLDIGI', 'fldigi_port', 7342 if ROLE == 'client' else 7343, int)
 
-try:
-    SERVER_SERIAL_PORT = server_config.get('TNC', 'SERIAL_PORT')
-except:
-    SERVER_SERIAL_PORT = 'COM3'  # Default Windows port
+# ---------------------------------------------------------------------------
+# Config update — writes to the role-appropriate file only
+# ---------------------------------------------------------------------------
+def _write(ini_path: pathlib.Path, section: str, option: str, value: str):
+    """Read → modify → write a single settings file."""
+    cfg = configparser.ConfigParser()
+    cfg.read(ini_path)
+    if not cfg.has_section(section):
+        cfg.add_section(section)
+    cfg.set(section, option.lower(), str(value))
+    with open(ini_path, 'w') as f:
+        cfg.write(f)
 
-try:
-    SERVER_SERIAL_SPEED = server_config.getint('TNC', 'SERIAL_SPEED')
-except:
-    SERVER_SERIAL_SPEED = 57600  # Default baud rate
+def update_client_config(section: str, option: str, value):
+    _write(_client_ini, section, option, str(value))
 
-# Server settings from server_config
-try:
-    SERVER_HOST = server_config.get('TNC','SERVER_HOST')
-except:
-    SERVER_HOST = config.get('TNC','server_host', fallback='localhost')
+def update_server_config(section: str, option: str, value):
+    _write(_server_ini, section, option, str(value))
 
-try:
-    SERVER_PORT = server_config.getint('TNC','SERVER_PORT')
-except:
-    SERVER_PORT = config.getint('TNC','server_port', fallback=8002)
+def update_config(section: str, option: str, value):
+    """Backward-compat: writes to the active role's settings file."""
+    _write(_ini_path, section, option, str(value))
 
-try:
-    S_CALLSIGN = parse_tuple(server_config.get('RADIO','SERVER_CALLSIGN'))
-except:
-    S_CALLSIGN = parse_tuple(config.get('RADIO','server_callsign', fallback='(SERVER, 0)'))
-
-# NEW: Backend system configuration
-try:
-    # Try client config first, then server config, then main config
-    BACKEND_TYPE = None
-    if hasattr(client_config, 'has_section') and client_config.has_section('NETWORK'):
-        BACKEND_TYPE = client_config.get('NETWORK', 'backend_type', fallback=None)
-    
-    if not BACKEND_TYPE and hasattr(server_config, 'has_section') and server_config.has_section('NETWORK'):
-        BACKEND_TYPE = server_config.get('NETWORK', 'backend_type', fallback=None)
-    
-    if not BACKEND_TYPE:
-        BACKEND_TYPE = config.get('NETWORK', 'backend_type', fallback='legacy')
-        
-except:
-    BACKEND_TYPE = 'legacy'  # Safe default
-
-# -- VARA Backend settings --
-try:
-    VARA_BANDWIDTH = config.getint('VARA', 'bandwidth', fallback=2300)
-    VARA_ARQ_TIMEOUT = config.getint('VARA', 'arq_timeout', fallback=60)
-    VARA_CHAT_MODE = config.get('VARA', 'chat_mode', fallback='ON')
-    VARA_CONNECTION_TIMEOUT = config.getint('VARA', 'connection_timeout', fallback=30)
-    VARA_HOST = config.get('VARA', 'vara_host', fallback='127.0.0.1')
-    VARA_TEST_MODE = config.getboolean('VARA', 'VARA_TEST_MODE', fallback=False)
-except:
-    # MUST use default values if VARA section doesn't exist for some reason
-    VARA_BANDWIDTH = 2300
-    VARA_ARQ_TIMEOUT = 60
-    VARA_CHAT_MODE = 'ON'
-    VARA_CONNECTION_TIMEOUT = 30
-    VARA_HOST = '127.0.0.1'
-    VARA_TEST_MODE = False
-
-# VARA PTT settings - SEPARATE for client and server
-# Client PTT settings
-try:
-    CLIENT_VARA_USE_PTT = client_config.getboolean('VARA', 'use_ptt', fallback=True)
-except:
-    CLIENT_VARA_USE_PTT = True
-
-try:
-    CLIENT_VARA_PTT_SERIAL_PORT = client_config.get('VARA', 'ptt_serial_port', fallback='COM10')
-except:
-    CLIENT_VARA_PTT_SERIAL_PORT = 'COM10'
-
-try:
-    CLIENT_VARA_PTT_SERIAL_BAUD = client_config.getint('VARA', 'ptt_serial_baud', fallback=38400)
-except:
-    CLIENT_VARA_PTT_SERIAL_BAUD = 38400
-
-try:
-    CLIENT_VARA_PTT_METHOD = client_config.get('VARA', 'ptt_method', fallback='BOTH')
-except:
-    CLIENT_VARA_PTT_METHOD = 'BOTH'
-
-try:
-    CLIENT_VARA_PRE_PTT_DELAY = client_config.getfloat('VARA', 'pre_ptt_delay', fallback=0.1)
-except:
-    CLIENT_VARA_PRE_PTT_DELAY = 0.1
-
-try:
-    CLIENT_VARA_POST_PTT_DELAY = client_config.getfloat('VARA', 'post_ptt_delay', fallback=0.1)
-except:
-    CLIENT_VARA_POST_PTT_DELAY = 0.1
-
-# Server PTT settings
-try:
-    SERVER_VARA_USE_PTT = server_config.getboolean('VARA', 'use_ptt', fallback=True)
-except:
-    SERVER_VARA_USE_PTT = True
-
-try:
-    SERVER_VARA_PTT_SERIAL_PORT = server_config.get('VARA', 'ptt_serial_port', fallback='COM11')
-except:
-    SERVER_VARA_PTT_SERIAL_PORT = 'COM11'
-
-try:
-    SERVER_VARA_PTT_SERIAL_BAUD = server_config.getint('VARA', 'ptt_serial_baud', fallback=38400)
-except:
-    SERVER_VARA_PTT_SERIAL_BAUD = 38400
-
-try:
-    SERVER_VARA_PTT_METHOD = server_config.get('VARA', 'ptt_method', fallback='BOTH')
-except:
-    SERVER_VARA_PTT_METHOD = 'BOTH'
-
-try:
-    SERVER_VARA_PRE_PTT_DELAY = server_config.getfloat('VARA', 'pre_ptt_delay', fallback=0.1)
-except:
-    SERVER_VARA_PRE_PTT_DELAY = 0.1
-
-try:
-    SERVER_VARA_POST_PTT_DELAY = server_config.getfloat('VARA', 'post_ptt_delay', fallback=0.1)
-except:
-    SERVER_VARA_POST_PTT_DELAY = 0.1
-
-# ===================================================================
-# RETICULUM SETTINGS
-# ===================================================================
-
-# Client Reticulum config directory
-try:
-    RETICULUM_CONFIG_DIR = client_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
-except:
-    RETICULUM_CONFIG_DIR = None
-
-# Server Reticulum config directory
-try:
-    RETICULUM_SERVER_CONFIG_DIR = server_config.get('RETICULUM', 'reticulum_config_dir', fallback=None)
-except:
-    RETICULUM_SERVER_CONFIG_DIR = None
-
-# Client Reticulum settings
-try:
-    RETICULUM_HAMSTR_SERVER_HASH = client_config.get('RETICULUM', 'hamstr_server_hash', fallback=None)
-except:
-    RETICULUM_HAMSTR_SERVER_HASH = None
-
-try:
-    RETICULUM_HAMSTR_SERVER_PUBKEY = client_config.get('RETICULUM', 'hamstr_server_pubkey', fallback=None)
-except:
-    RETICULUM_HAMSTR_SERVER_PUBKEY = None
-
-try:
-    RETICULUM_HAMSTR_SERVER_GRID = client_config.get('RETICULUM', 'hamstr_server_grid', fallback=None)
-except:
-    RETICULUM_HAMSTR_SERVER_GRID = None
-
-try:
-    RETICULUM_CONNECTION_TIMEOUT = client_config.getint('RETICULUM', 'connection_timeout', fallback=60)
-except:
-    RETICULUM_CONNECTION_TIMEOUT = 60
-
-try:
-    RETICULUM_KEEPALIVE_INTERVAL = client_config.getint('RETICULUM', 'keepalive_interval', fallback=0)
-except:
-    RETICULUM_KEEPALIVE_INTERVAL = 0
-
-# Server Reticulum settings
-try:
-    RETICULUM_SERVER_GRID = server_config.get('RETICULUM', 'server_grid', fallback=None)
-except:
-    RETICULUM_SERVER_GRID = None
-
-try:
-    RETICULUM_ANNOUNCE_INTERVAL = server_config.getint('RETICULUM', 'announce_interval', fallback=21600)
-except:
-    RETICULUM_ANNOUNCE_INTERVAL = 21600
-
-# Note: Transport configuration (TCP, LoRa, KISS TNC, etc.) is handled
-# by Reticulum's own config files in ~/.reticulum/ or custom reticulum_config_dir
-# HAMSTR does not need to configure transport details
+def reload_config():
+    """Re-read the active ini file into the active ConfigParser."""
+    _cfg.read([_legacy_ini, _ini_path])

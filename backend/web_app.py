@@ -1,3 +1,5 @@
+import os
+os.environ['HAMSTR_ROLE'] = 'client'
 import config
 import threading
 import sqlite3
