@@ -1,80 +1,112 @@
+# HAMSTR Client Settings
+# This file is the sole source of truth for the client. No other settings file is required.
+# Copy this template to client_settings.ini and edit as needed.
+# Settings marked REQUIRED must be changed before first use.
+
 [RADIO]
-client_callsign = (YOUR_CLIENT_CALLSIGN, SSID)
-hamstr_server = (SERVER_CALLSIGN, SSID)
+# REQUIRED: Your amateur radio callsign and SSID
+client_callsign = (YOUR_CALLSIGN, 0)
+# REQUIRED: The callsign of the HAMSTR server you are connecting to
+hamstr_server = (SERVER_CALLSIGN, 0)
+
+[NETWORK]
+# REQUIRED: Backend type must match the server — packet | vara | reticulum | fldigi
+backend_type = packet
+
+[GENERAL]
+# Packet protocol timing — safe defaults, rarely need changing
+send_retries = 3
+disconnect_retry = 1
+ack_timeout = 15
+max_packet_size = 200
+connection_timeout = 120
+connection_attempt_timeout = 10
+keep_alive_interval = 20
+keep_alive_retry_interval = 5
+keep_alive_final_interval = 10
+shutdown_timeout = 20
+packet_send_delay = 0.4
+disconnect_timeout = 5
+missing_packets_timeout = 50
+baud_rate = 300
+no_ack_timeout = 40
+no_packet_timeout = 50
+missing_packets_threshold = 0.5
+ready_timeout = 20
+connection_stabilization_delay = 1.1
+
+[PTT]
+# Legacy packet PTT timing — used by PacketProtocol
+tx_delay = 0.25
+rx_delay = 0.25
+ptt_tail = 0.1
+ack_spacing = 0.5
 
 [NOSTR]
 default_note_request_count = 2
 
+# =============================================================================
+# TNC / PACKET RADIO SETTINGS  (backend_type = packet)
+# =============================================================================
 [TNC]
 # Connection type: tcp or serial
 connection_type = tcp
 
-# TCP settings (when connection_type = tcp)
+# TCP settings (connection_type = tcp)
 client_host = localhost
 client_port = 8001
 
-# Serial Port settings (when connection_type = serial)
-# Windows: COM3, COM4, etc.
-# Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
-# macOS: /dev/cu.usbserial-*, /dev/cu.SLAB_USBtoUART, etc.
+# Serial settings (connection_type = serial)
+# Windows: COM3, COM4, etc.  Linux: /dev/ttyUSB0, /dev/ttyACM0, etc.
 serial_port = COM3
 serial_speed = 57600
 
-
-[NETWORK]
-# Client backend configuration (must match server)
-# This overrides the main settings.ini if needed for client-specific setup
-# backend_type = legacy
-
-# VARA Client Settings (when using VARA backend)
-
+# =============================================================================
+# VARA HF SETTINGS  (backend_type = vara)
+# =============================================================================
 [VARA]
-# Client uses these ports to connect to local VARA instance
+# Client connects to local VARA instance on these ports
 command_port = 8300
 data_port = 8301
-# If running VARA on different host:
-# vara_host = localhost
+vara_host = 127.0.0.1
 
-# PTT Configuration (REQUIRED for VARA HF!)
+# VARA modem settings
+bandwidth = 2300
+arq_timeout = 60
+chat_mode = ON
+connection_timeout = 30
+vara_test_mode = False
+
+# PTT — REQUIRED for VARA HF. VARA does not key the radio itself.
 use_ptt = true
-ptt_serial_port = COM11
+ptt_serial_port = COM3
 ptt_serial_baud = 38400
+# ptt_method: RTS | DTR | BOTH
 ptt_method = BOTH
 pre_ptt_delay = 0.1
 post_ptt_delay = 0.1
-VARA_TEST_MODE = False
 
-# Reticulum Client Settings (when using Reticulum backend)
+# =============================================================================
+# RETICULUM SETTINGS  (backend_type = reticulum)
+# =============================================================================
 [RETICULUM]
-# REQUIRED: Destination hash of HAMSTR server
-# Get this from the server operator or HAMSTR directory
-# Example: 02cbb0ceb2dd0117eeace98321a07b4c
-hamstr_server_hash = 
+# REQUIRED: Get these from the server operator directly
+hamstr_server_hash =
+hamstr_server_pubkey =
 
-# REQUIRED: Server's public key (hex string)
-# Get this from the server operator or HAMSTR directory
-# Example: a3f8d2e1c4b5a7f9d3e2c1b4d6f8a9c3e5d7f9b1a3c5e7d9f1b3a5c7e9f1b3a5
-hamstr_server_pubkey = 
+# Optional: grid square of the server (metadata only)
+# hamstr_server_grid =
 
-# Optional: Grid square (metadata only, for your reference)
-# hamstr_server_grid = 
-
-# Connection timeout (seconds) - adjust based on your transport
-# TCP (testing): 10-30 seconds
-# LoRa: 30-60 seconds  
-# Multi-hop mesh: 60-300 seconds
+# Connection timeout in seconds (LoRa may need 60+, multi-hop mesh 120+)
 connection_timeout = 60
-
-# Keep-alive interval (seconds) - 0 to disable
 keepalive_interval = 0
 
-# Reticulum config directory (optional)
-# If not specified, uses ~/.reticulum
+# Optional: path to Reticulum config directory (default: ~/.reticulum)
 # reticulum_config_dir =
 
-
-# FLDIGI Client Settings (when using FLDIGI)
+# =============================================================================
+# FLDIGI SETTINGS  (backend_type = fldigi)
+# =============================================================================
 [FLDIGI]
-# Client FLDIGI connection
-# fldigi_host = localhost
-# fldigi_port = 7342
+fldigi_host = localhost
+fldigi_port = 7342

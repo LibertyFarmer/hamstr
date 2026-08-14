@@ -7,7 +7,7 @@ import requests
 import aiohttp
 from datetime import timedelta
 from models import NoteRequestType, NoteType
-from config import NOSTR_RELAYS
+import config
 from nostr_sdk import Client, Filter, Kind, EventSource, PublicKey, Keys, Event, Metadata, Alphabet, SingleLetterTag
 
 # Initialize logging
@@ -84,7 +84,7 @@ async def get_following_list(client, public_key):
     
     try:
         # Make sure relays are connected with a longer timeout
-        await client.add_relays(NOSTR_RELAYS)
+        await client.add_relays(config.get_relay_list())
         await client.connect()
         
         # Retry loop for contact list
@@ -135,7 +135,7 @@ async def get_recent_notes(npub_hex, number, request_type=None):
     logging.info(f"Request type received: {request_type}")
     
     try:
-        await client.add_relays(NOSTR_RELAYS)
+        await client.add_relays(config.get_relay_list())
         await client.connect()
         
         try:
@@ -366,7 +366,7 @@ async def search_user_notes(search_term, number):
     
     logging.info(f"Searching for user: {search_term}")
     try:
-        await client.add_relays(NOSTR_RELAYS)
+        await client.add_relays(config.get_relay_list())
         await client.connect()
         
         source = EventSource.relays(timedelta(seconds=.5))
@@ -519,7 +519,7 @@ def search_nostr(request_type, number, search_text=None):
                 async def process_results():
                     client = Client()
                     try:
-                        await client.add_relays(NOSTR_RELAYS)
+                        await client.add_relays(config.get_relay_list())
                         await client.connect()
                         
                         # Give the client a moment to fully establish relay connections
@@ -595,7 +595,7 @@ def search_nostr(request_type, number, search_text=None):
             async def process_hashtag_search():
                 client = Client()
                 try:
-                    await client.add_relays(NOSTR_RELAYS)
+                    await client.add_relays(config.get_relay_list())
                     await client.connect()
                     
                     # Create filter for notes with any of the hashtags
@@ -739,42 +739,47 @@ async def publish_to_single_relay(relay_url, event):
         except:
             pass
 
+
 async def async_publish_note(note_json):
     """Publish a note to all configured relays in parallel."""
     try:
         # Parse and verify the event
         event = Event.from_json(note_json)
-        
+
         if not event.verify():
             logging.error("[PUBLISH] Note failed verification")
             return False
-        
+
         event_id = event.id().to_hex()
-        relay_count = len(NOSTR_RELAYS)
+
+        # Fetch relay list at publish time so config reloads are picked up
+        relay_list = config.get_relay_list()
+        relay_count = len(relay_list)
         logging.info(f"[PUBLISH] Publishing note to {relay_count} relays...")
-        
+
         # Create tasks for all relays (publish in parallel)
-        tasks = [publish_to_single_relay(relay, event) for relay in NOSTR_RELAYS]
-        
+        tasks = [publish_to_single_relay(relay, event) for relay in relay_list]
+
         # Wait for all tasks to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Count successes
         success_count = sum(1 for r in results if r is True)
-        
+
         logging.info(f"[PUBLISH] Event ID: {event_id}")
         logging.info(f"[PUBLISH] Published to {success_count}/{relay_count} relays")
-        
+
         # Return true if at least one relay succeeded
         return success_count > 0
-            
+
     except Exception as e:
         logging.error(f"[PUBLISH] Error publishing note: {e}")
         return False
 
+
 def publish_note(note):
-    """Publish received note to relays."""
-    logging.info(f"NOSTR note received for publishing")
+    """Synchronous wrapper — called by server.py process_note()."""
+    logging.info("NOSTR note received for publishing")
     try:
         note_data = json.loads(note)
         note_type = NoteType(note_data.get('note_type', NoteType.STANDARD.value))
