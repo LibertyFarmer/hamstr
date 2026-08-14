@@ -1,6 +1,6 @@
 flask>=3.0.0
 flask_socketio==5.5.1
-flask_cors==5.0.0
+flask_cors==6.0.0
 nostr_sdk==0.38.0
 cryptography==50.0.0
 brotli==1.2.0
