@@ -344,6 +344,18 @@ class Core:
             logging.error("Failed to send note")
             return False
 
+    def send_nutzap(self, session, nutzap_event):
+        logging.info("Preparing to send nutzap")
+        success = self.message_processor.send_message(session, nutzap_event, MessageType.NUTZAP)
+        if success:
+            socketio_logger.info("Nutzap sent successfully")
+            logging.info("Nutzap sent successfully")
+            return True
+        else:
+            socketio_logger.error("Failed to send nutzap")
+            logging.error("Failed to send nutzap")
+            return False
+
     def send_response(self, session, response):
         packets = self.split_message(response.encode())
         total_packets = len(packets)

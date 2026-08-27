@@ -278,7 +278,7 @@ class Client:
             if not self.session:
                 socketio_logger.error(f"[CLIENT] Failed to connect to server {server_callsign}")
                 logging.error(f"Failed to connect to server {server_callsign}")
-                return False
+                return False, f"Unable to connect to {server_callsign[0]}-{server_callsign[1]}"
         
         try:
             socketio_logger.info("[CLIENT] Sending note")
@@ -322,28 +322,28 @@ class Client:
                                 backend = getattr(self.core.backend_manager, 'current_backend', None)
                                 if backend and 'RETICULUM' in str(getattr(backend, 'get_backend_type', lambda: '')()):
                                      self.session.state = ModemState.DISCONNECTED
-                                     return True
+                                     return True, "Note published successfully"
                                      
-                            return True
+                            return True, "Note published successfully"
                         else:
                             error_msg = parsed_response.get('message', 'Unknown error') if isinstance(parsed_response, dict) else "Invalid response format"
                             socketio_logger.error(f"[CLIENT] Failed to publish: {error_msg}")
-                            return False
+                            return False, error_msg
                     else:
                         socketio_logger.error("[CLIENT] No response from server")
-                        return False
+                        return False, "No response from server"
                 else:
                     socketio_logger.error("[CLIENT] Failed to send note request")
-                    return False
+                    return False, "Failed to send note request"
             else:
                 # Fallback for legacy (if any)
                 socketio_logger.error("[CLIENT] Protocol manager not available")
-                return False
+                return False, "Protocol manager not available"
         
         except Exception as e:
             socketio_logger.error(f"[SYSTEM] Error sending note: {e}")
             logging.error(f"Error sending note: {e}")
-            return False
+            return False, f"Error sending note: {e}"
         finally:
             # Only run legacy disconnect if we are NOT on Reticulum/DirectProtocol (or if we failed early)
             # This prevents the "Unable to connect" error at the end

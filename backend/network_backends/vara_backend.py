@@ -12,6 +12,8 @@ import threading
 import json
 import re
 from typing import Optional, Dict, Any, Tuple
+
+from flask import session
 from .base_backend import NetworkBackend, BackendType, BackendStatus
 from ptt_controller import PTTController
 
@@ -401,6 +403,7 @@ class VARABackend(NetworkBackend):
             
             self._active_sessions[session_key] = session
             self._update_status(BackendStatus.CONNECTED)
+            socketio_logger.info("[SESSION] CONNECTED via VARA")
             return session
             
         except Exception as e:

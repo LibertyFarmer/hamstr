@@ -28,6 +28,7 @@ class MessageType(Enum):
     NWC_PAYMENT_RESPONSE = 21    # Server forwards NWC wallet response
     ZAP_SUCCESS_CONFIRM = 22     # Client confirms payment success
     ZAP_FAILED = 23             # Client reports payment failure
+    NUTZAP = 24                 # Cashu nutzap (kind:9321) - reuses NOTE plumbing
 
 # New SessionState enum
 class SessionState(Enum):
@@ -65,6 +66,7 @@ class NoteType(Enum):
     REPLY = 2     # Direct reply 
     QUOTE = 3     # Quote reply
     REPOST = 4    # Boost/repost
+    NUTZAP = 5    # Cashu nutzap event (kind:9321) - no reply metadata required
 
 #Request types to save bandwidth
 class NoteRequestType(Enum):

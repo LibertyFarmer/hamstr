@@ -88,8 +88,13 @@
       }
     }
 
-    try {
+try {
       await onSubmit(noteData);
+      isOpen = false;
+      noteContent = '';
+      replyContext = null;
+      replyType = null;
+      mode = 'write';
       onClose();
     } catch (error) {
       console.error('Error sending note:', error);

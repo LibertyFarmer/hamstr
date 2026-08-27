@@ -566,9 +566,10 @@ class Server:
                                 logging.info("[SERVER] Received ACK from client")
                                 continue
                             
-                            # Handle NOTE sending
-                            if request_data.get('type') == 'NOTE':
-                                logging.info("[SERVER] Received NOTE via DirectProtocol")
+                            # Handle NOTE / NUTZAP sending (identical handling - process_note is content-agnostic)
+                            if request_data.get('type') in ('NOTE', 'NUTZAP'):
+                                req_type = request_data.get('type')
+                                logging.info(f"[SERVER] Received {req_type} via DirectProtocol")
                                 note_content = request_data.get('content')
                                 
                                 if note_content:
@@ -583,7 +584,7 @@ class Server:
                                     success = self.core.protocol_manager.send_nostr_request(session, response_data)
                                     
                                     if success:
-                                        logging.info(f"[SERVER] Note publish result sent: {publish_success}")
+                                        logging.info(f"[SERVER] {req_type} publish result sent: {publish_success}")
                                         
                                         # WAIT for client ACK before disconnecting
                                         protocol = self.core.protocol_manager
@@ -593,9 +594,9 @@ class Server:
                                         else:
                                             logging.warning("[SERVER] No ACK received (timeout)")
                                     else:
-                                        logging.error("[SERVER] Failed to send note confirmation")
+                                        logging.error(f"[SERVER] Failed to send {req_type} confirmation")
                                 else:
-                                    logging.error("[SERVER] NOTE request missing content")
+                                    logging.error(f"[SERVER] {req_type} request missing content")
 
                                 break  # Now safe to disconnect
                             
@@ -830,7 +831,7 @@ class Server:
             if msg_type == MessageType.READY:
                 logging.info(f"Received READY from {source_callsign}")
                 self.core.send_single_packet(session, 0, 0, "READY".encode(), MessageType.READY)
-            elif msg_type == MessageType.NOTE:
+            elif msg_type in (MessageType.NOTE, MessageType.NUTZAP):
                 is_note = True
                 seq_num, total, content = self.parse_note_packet(message)
                 if total_packets is None:
@@ -838,10 +839,10 @@ class Server:
                 received_packets[seq_num] = content
                 self.core.send_ack(session, seq_num)
                 
-                logging.info(f"Received packet {seq_num}/{total_packets} for NOTE")
+                logging.info(f"Received packet {seq_num}/{total_packets} for {msg_type.name}")
                 
                 if len(received_packets) == total_packets:
-                    logging.info("All note packets received. Waiting for DONE from client.")
+                    logging.info("All packets received. Waiting for DONE from client.")
             elif msg_type == MessageType.DATA_REQUEST:
                 logging.info(f"Received DATA_REQUEST: {message}")
                 if self.core.send_ready(session):
@@ -1221,7 +1222,7 @@ class Server:
             note_type = NoteType(note_data.get('note_type', NoteType.STANDARD.value))
             logging.info(f"Processing {note_type.name} note type")
             
-            if note_type != NoteType.STANDARD:
+            if note_type in (NoteType.REPLY, NoteType.QUOTE, NoteType.REPOST):
                 if not note_data.get('reply_to') or not note_data.get('reply_pubkey'):
                     logging.error("Missing required reply metadata")
                     return False

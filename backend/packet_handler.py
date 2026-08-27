@@ -42,7 +42,8 @@ class PacketHandler:
         
         # Add PTT TX delay for radio to engage PTT
         time.sleep(config.PTT_TX_DELAY)
-        
+
+        socketio_logger.info("[CONTROL] ⚡ PTT ON")
         success = send_frame(session.tnc_connection, kiss_frame, is_ack=(message_type == MessageType.ACK))
         if success:
             estimated_time = estimate_transmission_time(len(kiss_frame))
@@ -70,6 +71,7 @@ class PacketHandler:
             
             # Wait for the packet to be fully transmitted plus the additional delay
             time.sleep(total_delay)
+            socketio_logger.info("[CONTROL] ⚡ PTT OFF")
         else:
             socketio_logger.error(f"[PACKET] Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")
             logging.error(f"Failed to send packet: Type={message_type.name}, Seq={seq_num}/{total_packets}")

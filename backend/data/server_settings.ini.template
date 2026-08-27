@@ -41,7 +41,7 @@ ptt_tail = 0.1
 ack_spacing = 0.5
 
 [NOSTR]
-relays = wss://relay.nostr.band/,wss://relay.damus.io,wss://nos.lol,wss://relay.getalby.com/v1
+relays = wss://relay.primal.net,wss://relay.damus.io,wss://nos.lol,wss://relay.getalby.com/v1
 
 # =============================================================================
 # TNC / PACKET RADIO SETTINGS  (backend_type = packet)

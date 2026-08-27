@@ -108,7 +108,7 @@
       console.log('Sending note data:', noteData);
       currentOperationLogs.set([]);
       progressDrawerOpen = true;
-      showWriteNoteModal = false;
+      showZapModal = false;
       isSending = true;
 
       let interactionType = null;
@@ -130,6 +130,16 @@
         window.dispatchEvent(new CustomEvent('noteInteractionUpdated', {
           detail: { noteId: targetNoteId, interactionType }
         }));
+
+        try {
+          await fetch(`${$baseURL}/api/notes/${targetNoteId}/interaction`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: interactionType })
+          });
+        } catch (err) {
+          console.error('Failed to persist interaction status:', err);
+        }
       }
 
       toastMessage = result.message || 'Note sent successfully!';
@@ -150,7 +160,7 @@
 
   async function handleSubmitZap(zapData) {
     try {
-      currentOperationLogs.set([]);
+      clearOperationLogs();
       progressDrawerOpen = true;
       showZapModal = false;
       isSending = true;

@@ -336,7 +336,7 @@ def send_note():
                 }), 400
             
             # Add e-tag with NIP-10 reply marker
-            e_tag = Tag.parse(["e", data['reply_to'], "", "reply"])
+            e_tag = Tag.parse(["e", data['reply_to']])
             tags.append(e_tag)
             
             # Add p-tag for the original note's author
@@ -399,6 +399,7 @@ def send_note():
 
         signed_note = builder.to_event(keys)
         note_json = signed_note.as_json()
+        socketio_logger.info(f"[DEBUG] Reply event JSON: {note_json}")
         
         compressed_note = compress_nostr_data(note_json)
         socketio_logger.info("[CLIENT] Note compressed, preparing to send")
@@ -411,8 +412,8 @@ def send_note():
             with radio_lock:
                 radio_operation_in_progress = True
                 try:
-                    success = client.connect_and_send_note(config.HAMSTR_SERVER, compressed_note)
-                    result_container.append(success)
+                    success, message = client.connect_and_send_note(config.HAMSTR_SERVER, compressed_note)
+                    result_container.append((success, message))
                 except Exception as e:
                     # Capture exception for hardware/protocol errors
                     error_container.append(str(e))
@@ -442,12 +443,19 @@ def send_note():
                 "message": error_msg
             }), 500
 
-        if not result_container or not result_container[0]:
-            # Connection failed - remote station not responding
+        if not result_container:
             socketio_logger.error(f"[CLIENT] Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}")
             return jsonify({
                 "success": False,
                 "message": f"Unable to connect to {config.HAMSTR_SERVER[0]}-{config.HAMSTR_SERVER[1]}"
+            }), 500
+
+        note_success, note_message = result_container[0]
+        if not note_success:
+            socketio_logger.error(f"[CLIENT] {note_message}")
+            return jsonify({
+                "success": False,
+                "message": note_message
             }), 500
 
         return jsonify({

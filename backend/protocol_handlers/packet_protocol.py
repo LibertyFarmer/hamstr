@@ -35,7 +35,18 @@ class PacketProtocol(ProtocolHandler):
                 
                 # Use existing send_note method which handles READY/ACK/DONE
                 return self.core.send_note(session, note_content)
-                
+
+            elif request_type == 'NUTZAP':
+                # Send nutzap using the same packetized path as NOTE
+                logging.info("[PACKET] Sending NUTZAP via packet protocol")
+                nutzap_content = request_data.get('content')
+
+                if not nutzap_content:
+                    logging.error("[PACKET] NUTZAP request missing content")
+                    return False
+
+                return self.core.send_nutzap(session, nutzap_content)
+
             else:
                 # DATA_REQUEST - use existing system
                 logging.info("[PACKET] Sending DATA_REQUEST via packet protocol")

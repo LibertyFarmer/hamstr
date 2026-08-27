@@ -231,6 +231,17 @@ RETICULUM_ANNOUNCE_INTERVAL    = _g('RETICULUM', 'announce_interval',    21600, 
 FLDIGI_HOST = _g('FLDIGI', 'fldigi_host', 'localhost')
 FLDIGI_PORT = _g('FLDIGI', 'fldigi_port', 7342 if ROLE == 'client' else 7343, int)
 
+
+# ---------------------------------------------------------------------------
+# CASHU SETTINGS LOAD
+# ---------------------------------------------------------------------------
+
+CASHU_DEFAULT_MINT = _g('CASHU', 'default_mint', 'https://mint.minibits.cash/Bitcoin')
+
+def get_mint_list() -> List[str]:
+    raw = _g('CASHU', 'mints', 'https://mint.minibits.cash/Bitcoin')
+    return [m.strip() for m in raw.split(',') if m.strip()]
+
 # ---------------------------------------------------------------------------
 # Config update — writes to the role-appropriate file only
 # ---------------------------------------------------------------------------
@@ -257,3 +268,4 @@ def update_config(section: str, option: str, value):
 def reload_config():
     """Re-read the active ini file into the active ConfigParser."""
     _cfg.read([_legacy_ini, _ini_path])
+

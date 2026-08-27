@@ -10,6 +10,7 @@ const logTranslations = {
   '\\[RETICULUM\\] Disconnecting\\.\\.\\.': 'Disconnecting...',
   '\\[SESSION\\] DISCONNECTED': 'Disconnected from server',
   '\\[SESSION\\] CONNECTED$': 'Connected to HAMSTR Server',
+  '\\[SESSION\\] CONNECTED via VARA': 'Connected to HAMSTR Server',
   '\\[CLIENT\\] Waiting for publish confirmation\\.\\.\\.': 'Waiting for relay publishing...',
 
   // Connection related - DirectProtocol

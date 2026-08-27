@@ -110,3 +110,10 @@ keepalive_interval = 0
 [FLDIGI]
 fldigi_host = localhost
 fldigi_port = 7342
+
+# =============================================================================
+# CASHU WALLET SETTINGS
+# =============================================================================
+[CASHU]
+default_mint = https://mint.minibits.cash/Bitcoin
+mints = https://mint.minibits.cash/Bitcoin,https://mint.coinos.io,https://stablenut.umint.cash,https://mint.lnvoltz.com
