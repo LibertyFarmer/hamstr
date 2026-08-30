@@ -21,7 +21,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from client import Client
-
+from cashu_db import init_cashu_db
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build')
@@ -94,6 +94,7 @@ def init_db():
 
 # Call the initialize database function at startup!!
 init_db()
+init_cashu_db(BASE_DIR)
 
 
 # API Routes
