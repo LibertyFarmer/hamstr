@@ -22,6 +22,7 @@ from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from client import Client
 from cashu_db import init_cashu_db
+import asyncio
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build')
@@ -95,6 +96,8 @@ def init_db():
 # Call the initialize database function at startup!!
 init_db()
 init_cashu_db(BASE_DIR)
+from cashu_wallet import CashuWallet
+wallet = CashuWallet(BASE_DIR)
 
 
 # API Routes
@@ -1026,7 +1029,7 @@ def get_serial_ports():
             "ports": []
         }), 500
 
-#--- Begin Zap and NWC ----
+#--- Begin Zap and NWC ROUTES ----
 
 @app.route('/api/nwc', methods=['GET', 'POST', 'DELETE'])
 def manage_nwc():
@@ -1624,6 +1627,141 @@ def send_zap():
         }), 500
     finally:
         radio_operation_in_progress = False
+
+#--- END Zap and NWC ROUTES ----
+
+#--- Begin CASHU ROUTES ----
+
+@app.route('/api/cashu/mints', methods=['GET'])
+def cashu_mints():
+    """List configured mints (from client_settings.ini [CASHU] section)."""
+    return jsonify({
+        "success": True,
+        "default_mint": config.CASHU_DEFAULT_MINT,
+        "mints": config.get_mint_list(),
+    })
+
+
+@app.route('/api/cashu/balance', methods=['GET'])
+def cashu_balance():
+    """Total wallet balance, optionally filtered to one mint via ?mint=<url>."""
+    mint_url = request.args.get('mint')
+    balance = wallet.get_balance(mint_url)
+    return jsonify({"success": True, "balance": balance, "mint": mint_url})
+
+
+@app.route('/api/cashu/select', methods=['GET'])
+def cashu_select():
+    """Preview which local proofs would be used for a given amount, without
+    spending anything. Useful for testing and for a future 'send' UI to show
+    the user what will actually go out before they confirm."""
+    amount = request.args.get('amount', type=int)
+    mint_url = request.args.get('mint')
+    if amount is None:
+        return jsonify({"success": False, "message": "amount query param required"}), 400
+    result = wallet.select_proofs(amount, mint_url)
+    return jsonify({"success": True, **result})
+
+
+@app.route('/api/cashu/mint/quote', methods=['POST'])
+def cashu_mint_quote():
+    """Step 1 of minting: get a Lightning invoice to pay.
+    Body: {"mint_url": "...", "amount": 64}"""
+    data = request.get_json()
+    mint_url = data.get('mint_url', config.CASHU_DEFAULT_MINT)
+    amount = data.get('amount')
+    if not amount:
+        return jsonify({"success": False, "message": "amount required"}), 400
+
+    quote = asyncio.run(wallet.request_mint_quote(mint_url, amount))
+    return jsonify({"success": True, **quote})
+
+
+@app.route('/api/cashu/mint/complete', methods=['POST'])
+def cashu_mint_complete():
+    """Step 2 of minting: poll until the invoice is paid, then store proofs.
+    Body: {"mint_url": "...", "quote_id": "...", "amount": 64}"""
+    data = request.get_json()
+    mint_url = data.get('mint_url', config.CASHU_DEFAULT_MINT)
+    quote_id = data.get('quote_id')
+    amount = data.get('amount')
+    if not quote_id or not amount:
+        return jsonify({"success": False, "message": "quote_id and amount required"}), 400
+
+    success = asyncio.run(wallet.check_and_complete_mint(mint_url, quote_id, amount))
+    if not success:
+        return jsonify({"success": False, "message": "Mint quote not paid or minting failed"}), 400
+    return jsonify({"success": True, "balance": wallet.get_balance(mint_url)})
+
+
+@app.route('/api/cashu/swap', methods=['POST'])
+def cashu_swap():
+    """Consolidate/reshape proofs. If proof_ids omitted, swaps all unspent
+    proofs at the given mint.
+    Body: {"mint_url": "...", "proof_ids": [...] (optional)}"""
+    data = request.get_json()
+    mint_url = data.get('mint_url', config.CASHU_DEFAULT_MINT)
+    proof_ids = data.get('proof_ids')
+
+    if not proof_ids:
+        conn = sqlite3.connect(wallet.db_path)
+        rows = conn.execute(
+            "SELECT id FROM proofs WHERE state = 'unspent' AND mint_url = ?", (mint_url,)
+        ).fetchall()
+        conn.close()
+        proof_ids = [r[0] for r in rows]
+
+    if not proof_ids:
+        return jsonify({"success": False, "message": "No unspent proofs to swap"}), 400
+
+    success = asyncio.run(wallet.swap_proofs(mint_url, proof_ids))
+    if not success:
+        return jsonify({"success": False, "message": "Swap failed - see server log"}), 400
+    return jsonify({"success": True, "balance": wallet.get_balance(mint_url)})
+
+
+@app.route('/api/cashu/melt/quote', methods=['POST'])
+def cashu_melt_quote():
+    """Step 1 of melting: get a quote for paying a Lightning invoice.
+    Body: {"mint_url": "...", "invoice": "lnbc..."}"""
+    data = request.get_json()
+    mint_url = data.get('mint_url', config.CASHU_DEFAULT_MINT)
+    invoice = data.get('invoice')
+    if not invoice:
+        return jsonify({"success": False, "message": "invoice required"}), 400
+
+    quote = asyncio.run(wallet.create_melt_quote(mint_url, invoice))
+    return jsonify({"success": True, **quote})
+
+
+@app.route('/api/cashu/melt/pay', methods=['POST'])
+def cashu_melt_pay():
+    """Step 2 of melting: pay the quote using local proofs. If proof_ids
+    omitted, auto-selects using select_proofs with a small fee buffer.
+    Body: {"mint_url": "...", "quote_id": "...", "amount": 5,
+           "fee_reserve": 1, "proof_ids": [...] (optional)}"""
+    data = request.get_json()
+    mint_url = data.get('mint_url', config.CASHU_DEFAULT_MINT)
+    quote_id = data.get('quote_id')
+    proof_ids = data.get('proof_ids')
+
+    if not quote_id:
+        return jsonify({"success": False, "message": "quote_id required"}), 400
+
+    if not proof_ids:
+        amount = data.get('amount', 0)
+        fee_reserve = data.get('fee_reserve', 0)
+        selection = wallet.select_proofs(amount + fee_reserve + 3, mint_url)
+        if not selection['proof_ids']:
+            return jsonify({"success": False, "message": "Insufficient balance"}), 400
+        proof_ids = selection['proof_ids']
+
+    result = asyncio.run(wallet.pay_melt_quote(mint_url, quote_id, proof_ids))
+    status_code = 200 if result.get('success') else 400
+    return jsonify({"success": result.get('success', False), **result,
+                     "balance": wallet.get_balance(mint_url)}), status_code
+
+#--- End CASHU ROUTES ----
         
 # Static file routes
 @app.route('/', defaults={'path': ''})
