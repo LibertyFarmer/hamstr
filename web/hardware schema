@@ -1,0 +1,56 @@
+================================================================================
+HAMSTR HARDWARE PROTOTYPE: WIRING & SYSTEM SCHEMATIC
+================================================================================
+
+1. COMPONENT LIST
+--------------------------------------------------------------------------------
+* Mainboard:        Raspberry Pi Zero 2W
+* Power Management: MH-CD42 (IP5306) Charge/Boost Module
+* Fuel Gauge:       Adafruit MAX17048 I2C LiPo Fuel Gauge
+* Battery:          1S 3.7V 2000mAh LiPo (JST-PH connector)
+* External Input:   USB-C Power Only Breakout (+5V / GND)
+* Display:          0.96" I2C OLED (SSD1306 / 128x64)
+* Controls:         Panel-Mount Momentary Push Button (Safe Shutdown)
+* Power Buffer:     1000µF – 2200µF Electrolytic Capacitor (on 5V Rail)
+
+
+2. POWER SUBSYSTEM WIRING
+--------------------------------------------------------------------------------
+[USB-C Breakout]             [MH-CD42 Module]
+  * +5V OUT          ----->    * +5V IN
+  * GND OUT          ----->    * GND IN
+
+[1S 2000mAh LiPo]            [MH-CD42 Module]          [MAX17048 Fuel Gauge]
+  * Battery (+)      ----->    * BAT+          ----->    * B+ (Battery Sense)
+  * Battery (-)      ----->    * BAT-          ----->    * B- (Battery Sense)
+
+[MH-CD42 Module]             [Raspberry Pi Zero 2W]    [Smoothing Capacitor]
+  * 5V OUT (+)       ----->    * Pin 2 / Pin 4 (5V)  <-> * Cap Positive (+)
+  * 5V OUT (GND)     ----->    * Pin 6 (GND)         <-> * Cap Negative (-)
+
+
+3. I2C BUS WIRING (MULTI-DROP: PINS 3 & 5)
+--------------------------------------------------------------------------------
+Pi Zero 2W Pin               Adafruit MAX17048         0.96" OLED Display
+--------------------------------------------------------------------------------
+Pin 1  (3.3V Power)  ----->    * VDD / VIN       ----->    * VCC
+Pin 3  (GPIO 2 / SDA)----->    * SDA             ----->    * SDA
+Pin 5  (GPIO 3 / SCL)----->    * SCL             ----->    * SCL
+Pin 9  (GND)         ----->    * GND             ----->    * GND
+
+
+4. CONTROL & SWITCH WIRING
+--------------------------------------------------------------------------------
+[Momentary Push Button]      [Raspberry Pi Zero 2W]
+  * Terminal 1       ----->    * Pin 37 (GPIO 26) or Pin 39
+  * Terminal 2       ----->    * Pin 39 (GND)
+
+
+5. I2C ADDRESS ALLOCATION
+--------------------------------------------------------------------------------
+* 0x36: Adafruit MAX17048 Fuel Gauge
+* 0x3C: 0.96" OLED Display (SSD1306)
+* 0x49: I2C Rotary Encoder (Optional Expansion)
+* 0x68: DS3231 RTC Module (Optional Expansion)
+* 0x76: BME280 Environmental Sensor (Optional Expansion)
+================================================================================
